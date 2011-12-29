@@ -30,6 +30,9 @@ extern struct wpa_driver_ops wpa_driver_hermes_ops; /* driver_hermes.c */
 #ifdef CONFIG_DRIVER_MADWIFI
 extern struct wpa_driver_ops wpa_driver_madwifi_ops; /* driver_madwifi.c */
 #endif /* CONFIG_DRIVER_MADWIFI */
+#ifdef CONFIG_DRIVER_AR6000
+extern struct wpa_driver_ops wpa_driver_ar6000_ops; /* driver_ar6000.c */
+#endif /* CONFIG_DRIVER_AR6000 */
 #ifdef CONFIG_DRIVER_ATMEL
 extern struct wpa_driver_ops wpa_driver_atmel_ops; /* driver_atmel.c */
 #endif /* CONFIG_DRIVER_ATMEL */
@@ -77,6 +80,9 @@ struct wpa_driver_ops *wpa_supplicant_drivers[] =
 #ifdef CONFIG_DRIVER_MADWIFI
 	&wpa_driver_madwifi_ops,
 #endif /* CONFIG_DRIVER_MADWIFI */
+#ifdef CONFIG_DRIVER_AR6000
+	&wpa_driver_ar6000_ops,
+#endif /* CONFIG_DRIVER_AR6000 */
 #ifdef CONFIG_DRIVER_ATMEL
 	&wpa_driver_atmel_ops,
 #endif /* CONFIG_DRIVER_ATMEL */

@@ -307,6 +307,10 @@ SM_STATE(SUPP_PAE, RESTART)
 {
 	SM_ENTRY(SUPP_PAE, RESTART);
 	sm->eapRestart = TRUE;
+	/* Adding a delay since the sequence should not be continued to quick
+	 * due to the race with the network down/up.
+	 */
+	usleep(400000);
 }
 
 

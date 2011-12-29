@@ -32,6 +32,12 @@
 #define ETH_P_RSN_PREAUTH 0x88c7
 #endif
 
+#ifdef ATHEROS_WAPI
+#ifndef ETH_P_WAI
+#define ETH_P_WAI       0x88b4
+#endif
+#endif
+
 /**
  * struct l2_packet_data - Internal l2_packet data structure
  *

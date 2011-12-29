@@ -24,7 +24,9 @@
 #include "eap_methods.h"
 
 #include <sys/stat.h>
-
+#ifdef TI_WAPI
+#include "ti_wapi.h"
+#endif
 
 /**
  * wpa_config_get_line - Read the next configuration file line
@@ -103,8 +105,12 @@ static int wpa_config_validate_network(struct wpa_ssid *ssid, int line)
 				   "passphrase configured.", line);
 			errors++;
 		}
-		wpa_config_update_psk(ssid);
-	}
+#ifdef ATHEROS_WAPI
+	/* Don't update for WAPI */
+	if (ssid->proto != WPA_PROTO_WAPI)
+#endif
+	    wpa_config_update_psk(ssid);
+    }
 
 	if ((ssid->key_mgmt & WPA_KEY_MGMT_PSK) && !ssid->psk_set) {
 		wpa_printf(MSG_ERROR, "Line %d: WPA-PSK accepted for key "
@@ -459,6 +465,55 @@ static void write_psk(FILE *f, struct wpa_ssid *ssid)
 	os_free(value);
 }
 
+#ifdef TI_WAPI
+static void write_wapi_psk(FILE *f, struct wpa_ssid *ssid)
+{
+	char *value = wpa_config_get(ssid, "wapi_psk");
+	if (value == NULL)
+		return;
+	fprintf(f, "\twapi_psk=%s\n", value);
+	os_free(value);
+}
+
+static void write_user_cert_uri(FILE *f, struct wpa_ssid *ssid)
+{
+	char *value = wpa_config_get(ssid, "user_cert_uri");
+	if (value == NULL)
+		return;
+	fprintf(f, "\tuser_cert_uri=%s\n", value);
+	os_free(value);
+}
+
+static void write_as_cert_uri(FILE *f, struct wpa_ssid *ssid)
+{
+	char *value = wpa_config_get(ssid, "as_cert_uri");
+	if (value == NULL)
+		return;
+	fprintf(f, "\tas_cert_uri=%s\n", value);
+	os_free(value);
+}
+
+static void write_user_key_uri(FILE *f, struct wpa_ssid *ssid)
+{
+	char *value = wpa_config_get(ssid, "user_key_uri");
+	if (value == NULL)
+		return;
+	fprintf(f, "\tuser_key_uri=%s\n", value);
+	os_free(value);
+}
+#endif
+
+
+#ifdef ATHEROS_WAPI
+static void write_wapi_psk(FILE *f, struct wpa_ssid *ssid)
+{
+	char *value = wpa_config_get(ssid, "wapi_psk");
+	if (value == NULL)
+		return;
+	fprintf(f, "\twapi_psk=%s\n", value);
+	os_free(value);
+}
+#endif // ATHEROS_WAPI
 
 static void write_proto(FILE *f, struct wpa_ssid *ssid)
 {
@@ -581,6 +636,13 @@ static void wpa_config_write_network(FILE *f, struct wpa_ssid *ssid)
 	INT(scan_ssid);
 	write_bssid(f, ssid);
 	write_psk(f, ssid);
+#ifdef TI_WAPI
+	write_wapi_psk(f, ssid);
+	write_user_cert_uri(f, ssid);
+	write_user_key_uri(f, ssid);
+	write_as_cert_uri(f, ssid);
+	INT(wapi_key_type);
+#endif
 	write_proto(f, ssid);
 	write_key_mgmt(f, ssid);
 	write_pairwise(f, ssid);
@@ -635,6 +697,13 @@ static void wpa_config_write_network(FILE *f, struct wpa_ssid *ssid)
 	INT(ieee80211w);
 #endif /* CONFIG_IEEE80211W */
 	STR(id_str);
+#ifdef ATHEROS_WAPI
+	STR(as_cert_uri);
+	STR(user_cert_uri);
+	STR(user_key_uri);
+	INT(wapi_key_type);
+	write_wapi_psk(f, ssid);
+#endif
 
 #undef STR
 #undef INT

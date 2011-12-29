@@ -648,6 +648,41 @@ int wpa_parse_wpa_ie(const u8 *wpa_ie, size_t wpa_ie_len,
 		return wpa_parse_wpa_ie_wpa(wpa_ie, wpa_ie_len, data);
 }
 
+#ifdef ATHEROS_WAPI
+int
+wpa_parse_wapi_ie(const u8 *wapi_ie, size_t wapi_ie_len,
+                  struct wapi_ie_data *data)
+{
+    u16 *tmp = (u16 *)wapi_ie;
+    data->version = ntohs(*tmp);
+    tmp += 1;
+
+    data->akmnumber = ntohs(*tmp);
+    tmp +=1;
+
+    data->akmlist = (int *) tmp;
+    tmp += data->akmnumber*2;
+
+    data->singlecodenumber = ntohs(*tmp);
+    tmp +=1;
+
+    data->singlecodelist = (int *)tmp;
+    tmp += data->singlecodenumber*2;
+
+    data->multicode = *(int *)tmp;
+    tmp += 2;
+
+    data->wapiability = *tmp;
+    tmp += 1;
+
+    data->bkidnumber = *tmp;
+    tmp += 1;
+
+    data->bkidlist = (bkid *)tmp;
+
+    return (u8 *)tmp - wapi_ie;
+}
+#endif
 
 static int wpa_gen_wpa_ie_wpa(u8 *wpa_ie, size_t wpa_ie_len,
 			      int pairwise_cipher, int group_cipher,
@@ -1902,6 +1937,9 @@ static void wpa_report_ie_mismatch(struct wpa_sm *sm,
 	}
 
 	wpa_sm_disassociate(sm, REASON_IE_IN_4WAY_DIFFERS);
+#ifdef ATHEROS_WAPI
+	wpa_sm_req_scan(sm, 0, 0);
+#endif
 }
 
 
@@ -3795,6 +3833,9 @@ static void wpa_sm_pmksa_free_cb(struct rsn_pmksa_cache_entry *entry,
 
 		os_memset(sm->pmk, 0, sizeof(sm->pmk));
 		wpa_sm_deauthenticate(sm, REASON_UNSPECIFIED);
+#ifdef ATHEROS_WAPI
+		wpa_sm_req_scan(sm, 0, 0);
+#endif
 	}
 }
 

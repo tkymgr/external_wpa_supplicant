@@ -1,6 +1,7 @@
 /*
  * WPA Supplicant / Control interface (shared code for all backends)
  * Copyright (c) 2004-2006, Jouni Malinen <j@w1.fi>
+ * Copyright (C) 2010 Sony Ericsson Mobile Communications AB
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -10,6 +11,9 @@
  * license.
  *
  * See README and COPYING for more details.
+ *
+ * NOTE: This file has been modified by Sony Ericsson Mobile Communications AB.
+ * Modifications are licensed under the License.
  */
 
 #include "includes.h"
@@ -28,6 +32,10 @@
 #include "wpa_ctrl.h"
 #include "eap.h"
 
+#ifdef TI_WAPI
+#include "ti_wapi.h"
+#include "base64.h"
+#endif
 
 static int wpa_supplicant_global_iface_interfaces(struct wpa_global *global,
 						  char *buf, int len);
@@ -309,7 +317,7 @@ static int wpa_supplicant_ctrl_iface_bssid(struct wpa_supplicant *wpa_s,
 	os_memcpy(ssid->bssid, bssid, ETH_ALEN);
 	ssid->bssid_set =
 		os_memcmp(bssid, "\x00\x00\x00\x00\x00\x00", ETH_ALEN) != 0;
-		
+
 
 	return 0;
 }
@@ -467,6 +475,106 @@ static char * wpa_supplicant_cipher_txt(char *pos, char *end, int cipher)
 	return pos;
 }
 
+#ifdef TI_WAPI
+static char * wpa_supplicant_wapi_ie_txt(char *pos, char *end,
+				    const u8 *ie, size_t ie_len)
+{
+	struct wapi_ie wie;
+	int ret;
+
+	wpa_printf(MSG_WAPI, "WAPIDBG %s", __func__);
+
+	ret = os_snprintf(pos, end - pos, "[WAPI-");
+	if (ret < 0 || ret >= end - pos)
+		return pos;
+	pos += ret;
+
+	if (wapi_parse_ie(ie, ie_len, &wie)) {
+		wpa_printf(MSG_WAPI, "WAPI %s: error parsing ie", __func__);
+		ret = os_snprintf(pos, end - pos, "?]");
+		if (ret < 0 || ret >= end - pos)
+			return pos;
+		pos += ret;
+		return pos;
+	}
+
+	if ((wie.akm_suite & WPA_KEY_MGMT_WAPI_CERT) &&
+			(wie.akm_suite & WPA_KEY_MGMT_WAPI_PSK))
+		ret = os_snprintf(pos, end - pos, "PSK-CERT]");
+	else if (wie.akm_suite & WPA_KEY_MGMT_WAPI_CERT)
+		ret = os_snprintf(pos, end - pos, "CERT]");
+	else if (wie.akm_suite & WPA_KEY_MGMT_WAPI_PSK)
+		ret = os_snprintf(pos, end - pos, "PSK]");
+	else {
+		wpa_printf(MSG_WAPI, "WAPI %s: error parsing ie", __func__);
+		ret = os_snprintf(pos, end - pos, "?]");
+		if (ret < 0 || ret >= end - pos)
+			return pos;
+		pos += ret;
+		return pos;
+	}
+
+	if (ret < 0 || ret >= end - pos)
+		return pos;
+	pos += ret;
+
+	return pos;
+}
+#endif
+
+
+#ifdef ATHEROS_WAPI
+#define WAPI_OUI                ((int)0x00721400)
+
+typedef enum _WAPI_AKM
+{
+    WAPI_AKML_RESV = 0,
+    WAPI_AKML_CERT,
+    WAPI_AKML_PSK
+}WAPI_AKM;
+
+
+#define WAPI_AKM_PSK            ((WAPI_AKML_PSK << 24)  | WAPI_OUI)
+
+#define WAPI_AKM_CERT           ((WAPI_AKML_CERT << 24) | WAPI_OUI)
+
+#define WAPIIE_ELEMENT_ID_LEN 1
+#define WAPIIE_LENGHTH_LEN    1
+#define WAPIIE_VERSION_LEN    2
+#define WAPIIE_AKM_CNT_LEN    2
+#define WAPIIE_AKM_SUIT_LEN   4
+
+#define WAPIIE_AKM_SUIT_PSK     0x00147202
+#define WAPIIE_AKM_SUIT_CERT    0x00147201
+#define MY_GET32(p) ((((*p) << 24) & 0xff000000) | (((*(p+1)) << 16) & 0xff0000) | (((*(p+2)) << 8)& 0xff00) | ((*(p+3)) & 0xff))
+
+static char * wpa_supplicant_wapi_ie_txt(char *pos, char *end, const u8 *ie, size_t ie_len)
+{
+    int akm_suit_cnt = 0, i, ret;
+    u8 *ie_hdr = (u8 *)ie, *p_akm_auit_cnt, *p_akm;
+
+    p_akm_auit_cnt = ie_hdr + (WAPIIE_ELEMENT_ID_LEN + WAPIIE_LENGHTH_LEN + WAPIIE_VERSION_LEN);
+    akm_suit_cnt = ((*p_akm_auit_cnt) | ((*(p_akm_auit_cnt + 1)) << 8 & 0xff00)) & 0xffff;
+    p_akm = (p_akm_auit_cnt + WAPIIE_AKM_CNT_LEN);
+    for (i = 0; i < akm_suit_cnt; i++) {
+	if (WAPIIE_AKM_SUIT_PSK == MY_GET32(p_akm)) {
+	    wpa_printf(MSG_DEBUG, "[WAPI-PSK]");
+	    ret = snprintf(pos, end - pos, "[WAPI-PSK]");
+	        if (ret < 0 || ret >= end - pos)
+		        return pos;
+	        pos += ret;
+	} else if (WAPIIE_AKM_SUIT_CERT == MY_GET32(p_akm)) {
+	    wpa_printf(MSG_DEBUG, "[WAPI-CERT]");
+	    ret = snprintf(pos, end - pos, "[WAPI-CERT]");
+	        if (ret < 0 || ret >= end - pos)
+		        return pos;
+	        pos += ret;
+	}
+	p_akm += WAPIIE_AKM_SUIT_LEN;
+    }
+    return pos;
+}
+#endif
 
 static char * wpa_supplicant_ie_txt(char *pos, char *end, const char *proto,
 				    const u8 *ie, size_t ie_len)
@@ -567,7 +675,22 @@ static int wpa_supplicant_ctrl_iface_scan_results(
 						    res->rsn_ie,
 						    res->rsn_ie_len);
 		}
+
+#ifdef ATHEROS_WAPI
+		if (res->wapi_ie_len) {
+			pos = wpa_supplicant_wapi_ie_txt(pos, end, res->wapi_ie, res->wapi_ie_len);
+		}
+
+		if (!res->wapi_ie_len && !res->wpa_ie_len && !res->rsn_ie_len &&
+#elif defined (TI_WAPI)
+		wpa_printf(MSG_WAPI, "WAPIDBG %s", __func__);
+		if (res->wapi_ie_len) {
+			pos = wpa_supplicant_wapi_ie_txt(pos, end, res->wapi_ie, res->wapi_ie_len);
+		}
+		if (!res->wpa_ie_len && !res->rsn_ie_len && !res->wapi_ie_len &&
+#else
 		if (!res->wpa_ie_len && !res->rsn_ie_len &&
+#endif
 		    res->caps & IEEE80211_CAP_PRIVACY) {
 			ret = os_snprintf(pos, end - pos, "[WEP]");
 			if (ret < 0 || ret >= end - pos)
@@ -601,6 +724,7 @@ static int wpa_supplicant_ctrl_iface_scan_results(
 
 	return pos - buf;
 }
+
 
 
 static int wpa_supplicant_ctrl_iface_select_network(
@@ -747,7 +871,7 @@ static int wpa_supplicant_ctrl_iface_remove_network(
 		return -1;
 	}
 
-	if (ssid == wpa_s->current_ssid) {
+	if (ssid == wpa_s->current_ssid || wpa_s->current_ssid == NULL) {
 		/*
 		 * Invalidate the EAP session cache if the current network is
 		 * removed.
@@ -796,10 +920,6 @@ static int wpa_supplicant_ctrl_iface_set_network(
 		wpa_printf(MSG_DEBUG, "CTRL_IFACE: Failed to set network "
 			   "variable '%s'", name);
 		return -1;
-	} else {
-		if (os_strcmp(name, "priority") == 0) {
-			wpa_config_update_prio_list(wpa_s->conf);
-		}
 	}
 
 	if (wpa_s->current_ssid == ssid) {
@@ -1008,7 +1128,11 @@ static int wpa_supplicant_ctrl_iface_get_capability(
 			if (strict)
 				return 0;
 			ret = os_snprintf(buf, buflen, "WPA-PSK WPA-EAP "
+#ifdef ATHEROS_WAPI
+					  "IEEE8021X WPA-NONE NONE WAPI-PSK");
+#else
 					  "IEEE8021X WPA-NONE NONE");
+#endif
 			if (ret < 0 || (size_t) ret >= buflen)
 				return -1;
 			return ret;
@@ -1041,6 +1165,15 @@ static int wpa_supplicant_ctrl_iface_get_capability(
 				return pos - buf;
 			pos += ret;
 		}
+
+#ifdef ATHEROS_WAPI
+		if (capa.key_mgmt & WPA_DRIVER_CAPA_KEY_MGMT_WAPI_PSK) {
+			ret = os_snprintf(pos, end - pos, " WAPI-PSK");
+			if (ret < 0 || ret >= end - pos)
+				return pos - buf;
+			pos += ret;
+		}
+#endif
 
 		return pos - buf;
 	}
@@ -1132,23 +1265,18 @@ static int wpa_supplicant_ctrl_iface_ap_scan(
 
 	if (ap_scan < 0 || ap_scan > 2)
 		return -1;
-#ifdef ANDROID
-	if ((ap_scan == 2) && (wpa_s->wpa_state != WPA_COMPLETED)) {
-		return 0;
-	}
-#endif
 	wpa_s->conf->ap_scan = ap_scan;
 	return 0;
 }
 
-static int wpa_supplicant_driver_cmd(struct wpa_supplicant *wpa_s, 
-                                     char *cmd, char *buf, size_t buflen)
+static int wpa_supplicant_driver_cmd(struct wpa_supplicant *wpa_s,
+	                             char *cmd, char *buf, size_t buflen)
 {
     int ret;
 
     ret = wpa_drv_driver_cmd(wpa_s, cmd, buf, buflen);
     if( ret == 0 ) {
-        ret = sprintf(buf, "%s\n", "OK");
+	ret = sprintf(buf, "%s\n", "OK");
     }
     return( ret );
 }
@@ -1166,9 +1294,9 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 		wpa_hexdump_ascii_key(MSG_DEBUG, "RX ctrl_iface",
 				      (const u8 *) buf, os_strlen(buf));
 	} else {
-        if (os_strcmp(buf, "PING") != 0)
-            wpa_hexdump_ascii(MSG_DEBUG, "RX ctrl_iface",
-                              (const u8 *) buf, os_strlen(buf));
+	if (os_strcmp(buf, "PING") != 0)
+	    wpa_hexdump_ascii(MSG_DEBUG, "RX ctrl_iface",
+	                      (const u8 *) buf, os_strlen(buf));
 	}
 
 	reply = os_malloc(reply_size);
@@ -1263,17 +1391,12 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 		wpa_s->disconnected = 1;
 		wpa_supplicant_disassociate(wpa_s, REASON_DEAUTH_LEAVING);
 	} else if (os_strcmp(buf, "SCAN") == 0) {
-#ifdef ANDROID
-		if (!wpa_s->scan_ongoing && ((wpa_s->wpa_state <= WPA_SCANNING) ||
-			(wpa_s->wpa_state >= WPA_COMPLETED))) {
-#endif
+		if (!wpa_s->scan_ongoing) {
 			wpa_s->scan_req = 2;
 			wpa_supplicant_req_scan(wpa_s, 0, 0);
-#ifdef ANDROID
-		} else {
-			wpa_printf(MSG_DEBUG, "Ongoing Scan action...");
 		}
-#endif
+		else
+			wpa_printf(MSG_DEBUG, "Ongoing Scan action...");
 	} else if (os_strcmp(buf, "SCAN_RESULTS") == 0) {
 		reply_len = wpa_supplicant_ctrl_iface_scan_results(
 			wpa_s, reply, reply_size);
@@ -1311,7 +1434,7 @@ char * wpa_supplicant_ctrl_iface_process(struct wpa_supplicant *wpa_s,
 		reply_len = wpa_supplicant_global_iface_interfaces(
 			wpa_s->global, reply, reply_size);
     } else if (os_strncmp(buf, "DRIVER ", 7) == 0) {
-        reply_len = wpa_supplicant_driver_cmd(wpa_s, buf + 7, reply, reply_size);
+	reply_len = wpa_supplicant_driver_cmd(wpa_s, buf + 7, reply, reply_size);
 	} else {
 		os_memcpy(reply, "UNKNOWN COMMAND\n", 16);
 		reply_len = 16;
@@ -1453,8 +1576,8 @@ char * wpa_supplicant_global_ctrl_iface_process(struct wpa_global *global,
 	int reply_len;
 
     if (os_strcmp(buf, "PING") != 0)
-        wpa_hexdump_ascii(MSG_DEBUG, "RX global ctrl_iface",
-                          (const u8 *) buf, os_strlen(buf));
+	wpa_hexdump_ascii(MSG_DEBUG, "RX global ctrl_iface",
+	                  (const u8 *) buf, os_strlen(buf));
 
 	reply = os_malloc(reply_size);
 	if (reply == NULL) {

@@ -35,6 +35,10 @@
 #include "pmksa_cache.h"
 #include "wpa_ctrl.h"
 #include "mlme.h"
+#ifdef ATHEROS_WAPI
+#include "atheros_wapi.h"
+#endif
+
 #ifdef ANDROID
 #include <cutils/properties.h>
 #endif
@@ -534,7 +538,6 @@ void wpa_supplicant_cancel_scan(struct wpa_supplicant *wpa_s)
 {
 	wpa_msg(wpa_s, MSG_DEBUG, "Cancelling scan request");
 	eloop_cancel_timeout(wpa_supplicant_scan, wpa_s, NULL);
-	wpa_s->scan_ongoing = 0;
 }
 
 
@@ -548,6 +551,9 @@ static void wpa_supplicant_timeout(void *eloop_ctx, void *timeout_ctx)
 		MAC2STR(bssid));
 	wpa_blacklist_add(wpa_s, bssid);
 	wpa_sm_notify_disassoc(wpa_s->wpa);
+#ifdef TI_WAPI
+	wapi_notify_disassoc(wpa_s->wapi);
+#endif
 	wpa_supplicant_disassociate(wpa_s, REASON_DEAUTH_LEAVING);
 	wpa_s->reassociate = 1;
 	wpa_supplicant_req_scan(wpa_s, 0, 0);
@@ -706,6 +712,12 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 		wpa_s->l2_br = NULL;
 	}
 
+#ifdef ATHEROS_WAPI
+	if (wpa_s->l2_wapi) {
+	    l2_packet_deinit(wpa_s->l2_wapi);
+	    wpa_s->l2_wapi = NULL;
+	}
+#endif // ATHEROS_WAPI
 	if (wpa_s->ctrl_iface) {
 		wpa_supplicant_ctrl_iface_deinit(wpa_s->ctrl_iface);
 		wpa_s->ctrl_iface = NULL;
@@ -721,6 +733,12 @@ static void wpa_supplicant_cleanup(struct wpa_supplicant *wpa_s)
 	wpa_sm_set_eapol(wpa_s->wpa, NULL);
 	eapol_sm_deinit(wpa_s->eapol);
 	wpa_s->eapol = NULL;
+
+#ifdef TI_WAPI
+	l2_packet_deinit(wpa_s->wapi_l2);
+	wpa_s->wapi_l2 = NULL;
+	wapi_deinit_sm(wpa_s->wapi);
+#endif
 
 	rsn_preauth_deinit(wpa_s->wpa);
 
@@ -841,7 +859,7 @@ void wpa_supplicant_set_state(struct wpa_supplicant *wpa_s, wpa_states state)
 						wpa_s->wpa_state);
 #ifdef ANDROID
 	wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_STATE_CHANGE "id=%d state=%d",
-                network_id, reported_state); /* Dm: */
+	        network_id, reported_state); /* Dm: */
 #endif
 	if (state == WPA_COMPLETED && wpa_s->new_connection) {
 #if defined(CONFIG_CTRL_IFACE) || !defined(CONFIG_NO_STDOUT_DEBUG)
@@ -946,7 +964,19 @@ int wpa_supplicant_reload_configuration(struct wpa_supplicant *wpa_s)
 		 */
 		eapol_sm_notify_eap_success(wpa_s->eapol, FALSE);
 	}
+#ifdef ATHEROS_WAPI
+	if (wpa_s->current_ssid != NULL &&
+	wpa_s->current_ssid->proto == WPA_PROTO_WAPI) {
+		wapi_supplicant_disassociate(wpa_s, 0);
+	} else {
+		eapol_sm_notify_config(wpa_s->eapol, NULL, NULL);
+	}
+	wpa_s->current_ssid = NULL;
+
+#else
 	eapol_sm_notify_config(wpa_s->eapol, NULL, NULL);
+#endif
+
 	wpa_sm_set_config(wpa_s->wpa, NULL);
 	wpa_sm_set_fast_reauth(wpa_s->wpa, wpa_s->conf->fast_reauth);
 	rsn_preauth_deinit(wpa_s->wpa);
@@ -1128,6 +1158,10 @@ static wpa_cipher cipher_suite2driver(int cipher)
 		return CIPHER_WEP104;
 	case WPA_CIPHER_CCMP:
 		return CIPHER_CCMP;
+#ifdef TI_WAPI
+	case WPA_CIPHER_SMS4:
+		return CIPHER_SMS4;
+#endif
 	case WPA_CIPHER_TKIP:
 	default:
 		return CIPHER_TKIP;
@@ -1237,6 +1271,10 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 		   (ie.key_mgmt & ssid->key_mgmt)) {
 		wpa_msg(wpa_s, MSG_DEBUG, "WPA: using IEEE 802.11i/D3.0");
 		proto = WPA_PROTO_WPA;
+#ifdef ATHEROS_WAPI
+	} else if (ssid->proto & WPA_PROTO_WAPI) {
+	        proto = WPA_PROTO_WAPI;
+#endif
 	} else if (bss) {
 		wpa_msg(wpa_s, MSG_WARNING, "WPA: Failed to select WPA/RSN");
 		return -1;
@@ -1279,7 +1317,15 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 				 bss ? bss->rsn_ie_len : 0))
 		return -1;
 
+#ifdef ATHEROS_WAPI
+	if (proto == WPA_PROTO_WAPI) {
+	    sel = ssid->group_cipher;
+	} else {
+	        sel = ie.group_cipher & ssid->group_cipher;
+	}
+#else
 	sel = ie.group_cipher & ssid->group_cipher;
+#endif
 	if (sel & WPA_CIPHER_CCMP) {
 		wpa_s->group_cipher = WPA_CIPHER_CCMP;
 		wpa_msg(wpa_s, MSG_DEBUG, "WPA: using GTK CCMP");
@@ -1292,12 +1338,25 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 	} else if (sel & WPA_CIPHER_WEP40) {
 		wpa_s->group_cipher = WPA_CIPHER_WEP40;
 		wpa_msg(wpa_s, MSG_DEBUG, "WPA: using GTK WEP40");
+#ifdef ATHEROS_WAPI
+	} else if (sel & WPA_CIPHER_SMS4) {
+	        wpa_s->group_cipher = WPA_CIPHER_SMS4;
+	        wpa_msg(wpa_s, MSG_DEBUG, "WPA: using GTK SMS4");
+#endif
 	} else {
 		wpa_printf(MSG_WARNING, "WPA: Failed to select group cipher.");
 		return -1;
 	}
 
+#ifdef ATHEROS_WAPI
+	if (proto == WPA_PROTO_WAPI) {
+	        sel = ssid->pairwise_cipher;
+	} else {
+	        sel = ie.pairwise_cipher & ssid->pairwise_cipher;
+	}
+#else
 	sel = ie.pairwise_cipher & ssid->pairwise_cipher;
+#endif
 	if (sel & WPA_CIPHER_CCMP) {
 		wpa_s->pairwise_cipher = WPA_CIPHER_CCMP;
 		wpa_msg(wpa_s, MSG_DEBUG, "WPA: using PTK CCMP");
@@ -1307,13 +1366,26 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 	} else if (sel & WPA_CIPHER_NONE) {
 		wpa_s->pairwise_cipher = WPA_CIPHER_NONE;
 		wpa_msg(wpa_s, MSG_DEBUG, "WPA: using PTK NONE");
+#ifdef ATHEROS_WAPI
+	} else if (sel & WPA_CIPHER_SMS4) {
+	        wpa_s->pairwise_cipher = WPA_CIPHER_SMS4;
+	        wpa_msg(wpa_s, MSG_DEBUG, "WPA: using PTK SMS4");
+#endif
 	} else {
 		wpa_printf(MSG_WARNING, "WPA: Failed to select pairwise "
 			   "cipher.");
 		return -1;
 	}
 
+#ifdef ATHEROS_WAPI
+	if (proto == WPA_PROTO_WAPI) {
+	    sel = ssid->key_mgmt;
+	} else {
+	    sel = ie.key_mgmt & ssid->key_mgmt;
+	}
+#else
 	sel = ie.key_mgmt & ssid->key_mgmt;
+#endif
 	if (sel & WPA_KEY_MGMT_IEEE8021X) {
 		wpa_s->key_mgmt = WPA_KEY_MGMT_IEEE8021X;
 		wpa_msg(wpa_s, MSG_DEBUG, "WPA: using KEY_MGMT 802.1X");
@@ -1323,6 +1395,14 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 	} else if (sel & WPA_KEY_MGMT_WPA_NONE) {
 		wpa_s->key_mgmt = WPA_KEY_MGMT_WPA_NONE;
 		wpa_msg(wpa_s, MSG_DEBUG, "WPA: using KEY_MGMT WPA-NONE");
+#ifdef ATHEROS_WAPI
+    } else if (sel & WPA_KEY_MGMT_WAPI_PSK) {
+	wpa_s->key_mgmt = WPA_KEY_MGMT_WAPI_PSK;
+	wpa_msg(wpa_s, MSG_DEBUG, "WPA: using KEY_MGMT WAPI-PSK");
+    } else if (sel & WPA_KEY_MGMT_WAPI_CERT) {
+	wpa_s->key_mgmt = WPA_KEY_MGMT_WAPI_CERT;
+	wpa_msg(wpa_s, MSG_DEBUG, "WPA: using KEY_MGMT WAPI-CERT");
+#endif
 	} else {
 		wpa_printf(MSG_WARNING, "WPA: Failed to select authenticated "
 			   "key management type.");
@@ -1351,10 +1431,16 @@ int wpa_supplicant_set_suites(struct wpa_supplicant *wpa_s,
 			 wpa_s->mgmt_group_cipher);
 #endif /* CONFIG_IEEE80211W */
 
+#ifdef ATHEROS_WAPI
+	if(proto != WPA_PROTO_WAPI) {
+#endif
 	if (wpa_sm_set_assoc_wpa_ie_default(wpa_s->wpa, wpa_ie, wpa_ie_len)) {
 		wpa_printf(MSG_WARNING, "WPA: Failed to generate WPA IE.");
 		return -1;
 	}
+#ifdef ATHEROS_WAPI
+    }
+#endif
 
 	if (ssid->key_mgmt & WPA_KEY_MGMT_PSK)
 		wpa_sm_set_pmk(wpa_s->wpa, ssid->psk, PMK_LEN);
@@ -1403,9 +1489,31 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 	}
 	wpa_supplicant_cancel_scan(wpa_s);
 
+#ifdef  ATHEROS_WAPI
+    if ((ssid->proto & WPA_PROTO_WAPI) &&
+      ((ssid->key_mgmt & WPA_KEY_MGMT_WAPI_PSK) || (ssid->key_mgmt & WPA_KEY_MGMT_WAPI_CERT))) {
+	wpa_supplicant_set_suites(wpa_s, bss, ssid, wpa_ie, &wpa_ie_len);
+	if (NULL == bss) {
+	    wpa_printf(MSG_ERROR, "[%s: %d] (NULL == bss)", __func__, __LINE__);
+	    return;
+	}
+	wapi_supplicant_associate(wpa_s, bss, ssid);
+	wpa_s->current_ssid = ssid;
+	return;
+    }
+#endif // ATHEROS_WAPI
 	/* Starting new association, so clear the possibly used WPA IE from the
 	 * previous association. */
 	wpa_sm_set_assoc_wpa_ie(wpa_s->wpa, NULL, 0);
+#ifdef ATHEROS_WAPI
+	/* Clear WAPI status */
+	wpa_drv_set_wapi(wpa_s, 0);
+#endif
+#ifdef TI_WAPI
+	wpa_printf(MSG_WAPI, "WAPIDBG %s: disabling external mode", __func__);
+	wpa_drv_set_external_mode( wpa_s, 0 );
+	wapi_set_assoc_ie(wpa_s->wapi, NULL, 0);
+#endif
 
 #ifdef IEEE8021X_EAPOL
 	if (ssid->key_mgmt & WPA_KEY_MGMT_IEEE8021X_NO_WPA) {
@@ -1458,7 +1566,23 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 				   "results)");
 			return;
 		}
-	} else {
+	}
+#ifdef TI_WAPI
+	/* WAPI IE was found, let's rock */
+	else if (bss && bss->wapi_ie_len) {
+		wpa_printf(MSG_WAPI, "WAPI wapi %s: WAPI IE was found, let's rock", __func__);
+		wpa_ie_len = sizeof(wpa_ie);
+		if (wapi_set_suites(wpa_s, bss, ssid, wpa_ie, &wpa_ie_len)) {
+			wpa_printf(MSG_WAPI, "WAPI wapi %s: Failed to set WAPI key "
+							   "management and encryption suites", __func__);
+			return;
+		}
+		/* Switch to external mode */
+		wpa_printf(MSG_WAPI, "WAPI wapi %s: Switching to external mode ", __func__);
+		wpa_drv_set_external_mode( wpa_s, 1 );
+	}
+#endif
+	else {
 		wpa_supplicant_set_non_wpa_policy(wpa_s, ssid);
 		wpa_ie_len = 0;
 	}
@@ -1603,6 +1727,9 @@ void wpa_supplicant_associate(struct wpa_supplicant *wpa_s,
 	}
 	wpa_s->current_ssid = ssid;
 	wpa_sm_set_config(wpa_s->wpa, wpa_s->current_ssid);
+#ifdef TI_WAPI
+	wapi_set_config(wpa_s->wapi, wpa_s->current_ssid);
+#endif
 	wpa_supplicant_initiate_eapol(wpa_s);
 }
 
@@ -1631,7 +1758,19 @@ void wpa_supplicant_disassociate(struct wpa_supplicant *wpa_s,
 	wpa_supplicant_mark_disassoc(wpa_s);
 	wpa_s->current_ssid = NULL;
 	wpa_sm_set_config(wpa_s->wpa, NULL);
+#ifdef ATHEROS_WAPI
+	if (wpa_s->key_mgmt == WPA_KEY_MGMT_WAPI_PSK ||
+	    wpa_s->key_mgmt == WPA_KEY_MGMT_WAPI_CERT)
+	{
+	    wapi_supplicant_disassociate(wpa_s, reason_code);
+	} else {
+#elif defined (TI_WAPI)
+	wapi_set_config(wpa_s->wapi, NULL);
+#endif
 	eapol_sm_notify_config(wpa_s->eapol, NULL, NULL);
+#ifdef ATHEROS_WAPI
+	}
+#endif // ATHEROS_WAPI
 }
 
 
@@ -1660,9 +1799,20 @@ void wpa_supplicant_deauthenticate(struct wpa_supplicant *wpa_s,
 	wpa_clear_keys(wpa_s, addr);
 	wpa_s->current_ssid = NULL;
 	wpa_sm_set_config(wpa_s->wpa, NULL);
+#ifdef ATHEROS_WAPI
+    if (wpa_s->key_mgmt == WPA_KEY_MGMT_WAPI_PSK ||
+	wpa_s->key_mgmt == WPA_KEY_MGMT_WAPI_CERT) {
+	wapi_supplicant_deauthenticate(wpa_s, reason_code);
+    } else {
+#elif defined (TI_WAPI)
+	wapi_set_config(wpa_s->wapi, NULL);
+#endif // ATHEROS_WAPI
 	eapol_sm_notify_config(wpa_s->eapol, NULL, NULL);
 	eapol_sm_notify_portEnabled(wpa_s->eapol, FALSE);
 	eapol_sm_notify_portValid(wpa_s->eapol, FALSE);
+#ifdef ATHEROS_WAPI
+    }
+#endif // ATHEROS_WAPI
 }
 
 
@@ -2023,7 +2173,10 @@ int wpa_supplicant_driver_init(struct wpa_supplicant *wpa_s,
 			       int wait_for_interface)
 {
 	static int interface_count = 0;
-
+#ifdef TI_WAPI
+	wpa_s->l2 = NULL;
+	wpa_s->wapi_l2 = NULL;
+#endif
 	for (;;) {
 		if (wpa_s->driver->send_eapol) {
 			const u8 *addr = wpa_drv_get_mac_addr(wpa_s);
@@ -2031,12 +2184,32 @@ int wpa_supplicant_driver_init(struct wpa_supplicant *wpa_s,
 				os_memcpy(wpa_s->own_addr, addr, ETH_ALEN);
 			break;
 		}
+#ifdef TI_WAPI
+		wpa_printf(MSG_WAPI, "WAPIDBG %s: creating l2 handlers", __func__);
+		if (!wpa_s->l2) {
+			wpa_s->l2 = l2_packet_init(wpa_s->ifname,
+								   wpa_drv_get_mac_addr(wpa_s),
+								   ETH_P_EAPOL,
+								   wpa_supplicant_rx_eapol, wpa_s, 0);
+		}
+
+		if (!wpa_s->wapi_l2) {
+			wpa_s->wapi_l2 = l2_packet_init(wpa_s->ifname,
+					   wpa_drv_get_mac_addr(wpa_s),
+					   WAPI_ETHER_TYPE,
+					   wapi_rx_wai, wpa_s, 0);
+		}
+
+		if (wpa_s->l2 && wpa_s->wapi_l2)
+			break;
+#else
 		wpa_s->l2 = l2_packet_init(wpa_s->ifname,
 					   wpa_drv_get_mac_addr(wpa_s),
 					   ETH_P_EAPOL,
 					   wpa_supplicant_rx_eapol, wpa_s, 0);
 		if (wpa_s->l2)
 			break;
+#endif
 		else if (!wait_for_interface)
 			return -1;
 		wpa_printf(MSG_DEBUG, "Waiting for interface..");
@@ -2047,10 +2220,23 @@ int wpa_supplicant_driver_init(struct wpa_supplicant *wpa_s,
 		wpa_printf(MSG_ERROR, "Failed to get own L2 address");
 		return -1;
 	}
+#ifdef TI_WAPI
+	if (wpa_s->wapi_l2 && l2_packet_get_own_addr(wpa_s->wapi_l2, wpa_s->own_addr)) {
+		wpa_printf(MSG_WAPI, "WAPI wapi: Failed to get own L2 address for WAPI");
+		return -1;
+	}
 
+	if (wpa_drv_set_generic_ethertype(wpa_s, WAPI_ETHER_TYPE))
+		return -1;
+#endif
 	wpa_printf(MSG_DEBUG, "Own MAC address: " MACSTR,
 		   MAC2STR(wpa_s->own_addr));
 
+#ifdef ATHEROS_WAPI
+	wapi_supplicant_init(wpa_s);
+	if (wpa_drv_set_generic_ethertype(wpa_s, ETH_P_WAI))
+		return -1;
+#endif
 	if (wpa_s->bridge_ifname[0]) {
 		wpa_printf(MSG_DEBUG, "Receiving packets from bridge interface"
 			   " '%s'", wpa_s->bridge_ifname);
@@ -2129,6 +2315,12 @@ static int wpa_supplicant_init_iface(struct wpa_supplicant *wpa_s,
 		   iface->driver ? iface->driver : "default",
 		   iface->ctrl_interface ? iface->ctrl_interface : "N/A",
 		   iface->bridge_ifname ? iface->bridge_ifname : "N/A");
+
+#ifdef TI_WAPI
+	wpa_s->wapi_debug = iface->driver && !strcmp(iface->driver, "test");
+	if (wpa_s->wapi_debug)
+		wpa_printf(MSG_WAPI, "WAPI wapi is running in test mode");
+#endif
 
 	if (wpa_supplicant_set_driver(wpa_s, iface->driver) < 0) {
 		return -1;
@@ -2322,7 +2514,14 @@ static int wpa_supplicant_init_iface2(struct wpa_supplicant *wpa_s,
 
 	if (wpa_supplicant_init_wpa(wpa_s) < 0)
 		return -1;
-
+#ifdef TI_WAPI
+	wpa_s->wapi = os_malloc(sizeof(*wpa_s->wapi));
+	if (!wpa_s->wapi) {
+		wpa_printf(MSG_WAPI, "WAPI %s: error mallocing", __func__);
+		return -1;
+	}
+	wapi_init_sm(wpa_s->wapi);
+#endif
 	wpa_sm_set_ifname(wpa_s->wpa, wpa_s->ifname,
 			  wpa_s->bridge_ifname[0] ? wpa_s->bridge_ifname :
 			  NULL);
@@ -2452,7 +2651,7 @@ struct wpa_supplicant * wpa_supplicant_add_iface(struct wpa_global *global,
 		os_free(wpa_s);
 		return NULL;
 	}
-		
+
 #ifdef ANDROID
 	char scan_prop[PROPERTY_VALUE_MAX];
 	char *endp;
@@ -2652,7 +2851,7 @@ void wpa_supplicant_deinit(struct wpa_global *global)
 		return;
 
 	wpa_supplicant_terminate(0, global, NULL);
-	
+
 	while (global->ifaces)
 		wpa_supplicant_remove_iface(global, global->ifaces);
 
@@ -2661,6 +2860,9 @@ void wpa_supplicant_deinit(struct wpa_global *global)
 	if (global->dbus_ctrl_iface)
 		wpa_supplicant_dbus_ctrl_iface_deinit(global->dbus_ctrl_iface);
 
+#ifdef ATHEROS_WAPI
+	wapi_supplicant_deinit();
+#endif // ATHEROS_WAPI
 	eap_peer_unregister_methods();
 
 	eloop_destroy();
@@ -2674,3 +2876,10 @@ void wpa_supplicant_deinit(struct wpa_global *global)
 	os_free(global);
 	wpa_debug_close_file();
 }
+
+#ifdef TI_WAPI
+void wpa_supplicant_cancel_scan_timeout(struct wpa_supplicant *wpa_s)
+{
+	eloop_cancel_timeout(wpa_supplicant_scan, wpa_s, NULL);
+}
+#endif

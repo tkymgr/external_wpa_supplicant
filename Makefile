@@ -753,6 +753,13 @@ OBJS_t := $(OBJS) eapol_test.o radius.o radius_client.o
 OBJS_t2 := $(OBJS) preauth_test.o
 OBJS += $(CONFIG_MAIN).o drivers.o $(OBJS_d)
 
+ifdef ATHEROS_WAPI
+CFLAGS += -DATHEROS_WAPI
+OBJS += wapi.o
+EXTRALIBS += -liwnwai_asue -lsms4 -lecc
+LIBDIRS += -L./wapi/LIB
+endif
+
 ifdef CONFIG_NDIS_EVENTS_INTEGRATED
 CFLAGS += -DCONFIG_NDIS_EVENTS_INTEGRATED
 OBJS += ndis_events.o
@@ -770,8 +777,8 @@ endif
 
 dynamic_eap_methods: $(EAPDYN)
 
-wpa_supplicant: .config $(OBJS)
-	$(LDO) $(LDFLAGS) -o wpa_supplicant $(OBJS) $(LIBS) $(EXTRALIBS)
+wpa_supplicant: .config $(OBJS) wapi/LIB/libiwnwai_asue.a wapi/LIB/libecc.a wapi/LIB/libsms4.a
+	$(LDO) $(LDFLAGS) -o wpa_supplicant $(OBJS) $(LIBDIRS) $(LIBS) $(EXTRALIBS)
 
 eapol_test: .config $(OBJS_t)
 	$(LDO) $(LDFLAGS) -o eapol_test $(OBJS_t) $(LIBS)

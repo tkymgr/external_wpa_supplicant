@@ -26,6 +26,10 @@ struct wpa_blacklist {
 
 struct wpa_scan_result;
 struct wpa_sm;
+#ifdef TI_WAPI
+struct wapi_sm;
+#endif
+
 struct wpa_supplicant;
 
 /*
@@ -272,6 +276,11 @@ struct wpa_supplicant {
 	struct wpa_supplicant *next;
 	struct l2_packet_data *l2;
 	struct l2_packet_data *l2_br;
+#ifdef TI_WAPI
+	struct l2_packet_data *wapi_l2;
+	struct wapi_sm *wapi;
+	int wapi_debug;
+#endif /* TI_WAPI */
 	unsigned char own_addr[ETH_ALEN];
 	char ifname[100];
 #ifdef CONFIG_CTRL_IFACE_DBUS
@@ -347,6 +356,14 @@ struct wpa_supplicant {
 	int rssi;           /* current signal level */
 #ifdef ANDROID
 	int scan_interval;  /* time between scans when no APs available */
+#endif
+#ifdef ATHEROS_WAPI
+	struct l2_packet_data *l2_wapi;
+
+	u8 assoc_wapi_ie[256]; /* Own WAPI/RSN IE from (Re)AssocReq */
+	u8 ap_wapi_ie[256];
+	u8 ap_wapi_ie_len;
+	u8 assoc_wapi_ie_len;
 #endif
 };
 
@@ -466,6 +483,32 @@ static inline int wpa_drv_set_wpa(struct wpa_supplicant *wpa_s, int enabled)
 	return 0;
 }
 
+#ifdef ATHEROS_WAPI
+static inline int wpa_drv_set_wapi(struct wpa_supplicant *wpa_s, int enabled)
+{
+	if (wpa_s->driver->set_wapi) {
+		return wpa_s->driver->set_wapi(wpa_s->drv_priv, enabled);
+	}
+	return 0;
+}
+
+static inline int wpa_drv_set_port_state(struct wpa_supplicant *wpa_s,
+	                                 const int port_state)
+{
+	if (wpa_s->driver->set_port_state)
+	        return wpa_s->driver->set_port_state(wpa_s->drv_priv, port_state);
+	return 0;
+}
+
+static inline int wpa_drv_set_generic_ethertype(struct wpa_supplicant *wpa_s,
+	                                        const int ethertype)
+{
+	if (wpa_s->driver->set_generic_ethertype)
+	        return wpa_s->driver->set_generic_ethertype(wpa_s->drv_priv, ethertype);
+	return 0;
+}
+#endif
+
 static inline int wpa_drv_associate(struct wpa_supplicant *wpa_s,
 				    struct wpa_driver_associate_params *params)
 {
@@ -483,6 +526,17 @@ static inline int wpa_drv_scan(struct wpa_supplicant *wpa_s, const u8 *ssid,
 	}
 	return -1;
 }
+
+#ifdef ATHEROS_WAPI
+static inline int wpa_drv_set_wpa_ie(struct wpa_supplicant *wpa_s,
+	                             const u8 *wpa_ie, size_t wpa_ie_len)
+{
+	if (wpa_s->driver->set_wpa_ie) {
+		return wpa_s->driver->set_wpa_ie(wpa_s->drv_priv, wpa_ie, wpa_ie_len);
+	}
+	return -1;
+}
+#endif
 
 static inline int wpa_drv_get_scan_results(struct wpa_supplicant *wpa_s,
 					   struct wpa_scan_result *results,
@@ -706,5 +760,37 @@ static inline int wpa_drv_driver_cmd(struct wpa_supplicant *wpa_s,
 		return wpa_s->driver->driver_cmd(wpa_s->drv_priv, cmd, buf, buf_len);
 	return -1;
 }
+
+#ifdef TI_WAPI
+static inline void wapi_supplicant_set_state(void *wpa_s, wpa_states state)
+{
+	wpa_supplicant_set_state(wpa_s, state);
+}
+
+static inline int wpa_drv_set_port_state(struct wpa_supplicant *wpa_s,
+					 const int port_state)
+{
+	if (wpa_s->driver->set_port_state)
+		return wpa_s->driver->set_port_state(wpa_s->drv_priv, port_state);
+	return 0;
+}
+
+static inline int wpa_drv_set_generic_ethertype(struct wpa_supplicant *wpa_s,
+						const int ethertype)
+{
+	if (wpa_s->driver->set_generic_ethertype)
+		return wpa_s->driver->set_generic_ethertype(wpa_s->drv_priv, ethertype);
+	return 0;
+}
+
+static inline int wpa_drv_set_external_mode(struct wpa_supplicant *wpa_s,
+						const int mode)
+{
+	if (wpa_s->driver->set_external_mode)
+		return wpa_s->driver->set_external_mode(wpa_s->drv_priv, mode);
+	return 0;
+}
+#endif /* TI_WAPI */
+
 
 #endif /* WPA_SUPPLICANT_I_H */

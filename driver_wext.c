@@ -32,6 +32,10 @@
 #include "priv_netlink.h"
 #include "driver_wext.h"
 #include "wpa.h"
+#ifdef TI_WAPI
+#include "ti_wapi.h"
+#endif
+
 #include "wpa_ctrl.h"
 #include "wpa_supplicant_i.h"
 #include "config_ssid.h"
@@ -1192,7 +1196,15 @@ static int wpa_scan_result_compar(const void *a, const void *b)
 {
 	const struct wpa_scan_result *wa = a;
 	const struct wpa_scan_result *wb = b;
-
+#ifdef TI_WAPI
+	/* WPA/WPA2/WAPI support preferred */
+	if ((wb->wpa_ie_len || wb->rsn_ie_len || wb->wapi_ie_len) &&
+			!(wa->wpa_ie_len || wa->rsn_ie_len || wa->wapi_ie_len))
+			return 1;
+	if (!(wb->wpa_ie_len || wb->rsn_ie_len || wb->wapi_ie_len) &&
+	    (wa->wpa_ie_len || wa->rsn_ie_len || wa->wapi_ie_len))
+		return -1;
+#else
 	/* WPA/WPA2 support preferred */
 	if ((wb->wpa_ie_len || wb->rsn_ie_len) &&
 	    !(wa->wpa_ie_len || wa->rsn_ie_len))
@@ -1200,7 +1212,7 @@ static int wpa_scan_result_compar(const void *a, const void *b)
 	if (!(wb->wpa_ie_len || wb->rsn_ie_len) &&
 	    (wa->wpa_ie_len || wa->rsn_ie_len))
 		return -1;
-
+#endif
 	/* privacy support preferred */
 	if ((wa->caps & IEEE80211_CAP_PRIVACY) == 0 &&
 	    (wb->caps & IEEE80211_CAP_PRIVACY))
@@ -1456,6 +1468,14 @@ int wpa_driver_wext_get_scan_results(void *priv,
 						  ielen);
 					results[ap_num].rsn_ie_len = ielen;
 					break;
+#ifdef TI_WAPI
+	                        case WAPI_INFO_ELEM:
+	                                os_memcpy(results[ap_num].wapi_ie, gpos, ielen);
+	                                results[ap_num].wapi_ie_len = ielen;
+					wpa_printf(MSG_WAPI, "WAPI wapi: %s - found wapi IE", __func__);
+	                                break;
+#endif /* TI_WAPI */
+
 				}
 				gpos += ielen;
 			}
@@ -1501,6 +1521,31 @@ int wpa_driver_wext_get_scan_results(void *priv,
 					   bytes);
 				results[ap_num].rsn_ie_len = bytes;
 			}
+
+#ifdef ATHEROS_WAPI
+			else if (clen > 8 &&
+				   strncmp(custom, "wapi_ie=", 8) == 0 &&
+				   ap_num < max_size) {
+				   wpa_msg(NULL, MSG_ERROR, "[get wapi ie]\n"); /* Dm: */
+				char *spos;
+				int bytes;
+				spos = custom + 8;
+				bytes = custom + clen - spos;
+				if (bytes & 1)
+					break;
+				bytes /= 2;
+				if (bytes > SSID_MAX_WAPI_IE_LEN) {
+					wpa_printf(MSG_INFO, "Too long WAPI IE "
+						   "(%d)", bytes);
+					break;
+				}
+				hexstr2bin(spos, results[ap_num].wapi_ie,
+					   bytes);
+				results[ap_num].wapi_ie_len = bytes;
+	        wpa_hexdump_ascii(MSG_DEBUG, "wapi ie", (u8 *)results[ap_num].wapi_ie, results[ap_num].wapi_ie_len);
+			}
+#endif
+
 			break;
 		}
 
@@ -1534,6 +1579,11 @@ static int wpa_driver_wext_get_range(void *priv)
 	struct iwreq iwr;
 	int minlen;
 	size_t buflen;
+#ifdef ATHEROS_WAPI
+	int res;
+	#define MAX_IOCTL_ALLOWED (20)
+	int errors = 0;
+#endif /* ATHEROS_WAPI */
 
 	/*
 	 * Use larger buffer than struct iw_range in order to allow the
@@ -1552,11 +1602,26 @@ static int wpa_driver_wext_get_range(void *priv)
 	minlen = ((char *) &range->enc_capa) - (char *) range +
 		sizeof(range->enc_capa);
 
+#ifdef ATHEROS_WAPI
+	res = ioctl(drv->ioctl_sock, SIOCGIWRANGE, &iwr);
+	while (res < 0 && errors < MAX_IOCTL_ALLOWED) {
+		errors++;
+		sleep(1);
+		res = ioctl(drv->ioctl_sock, SIOCGIWRANGE, &iwr);
+	}
+	if (res < 0){
+		perror("ioctl[SIOCGIWRANGE]");
+		os_free(range);
+		return -1;
+	}
+	if (iwr.u.data.length >= minlen &&
+#else
 	if (ioctl(drv->ioctl_sock, SIOCGIWRANGE, &iwr) < 0) {
 		perror("ioctl[SIOCGIWRANGE]");
 		os_free(range);
 		return -1;
 	} else if (iwr.u.data.length >= minlen &&
+#endif
 		   range->we_version_compiled >= 18) {
 		wpa_printf(MSG_DEBUG, "SIOCGIWRANGE: WE(compiled)=%d "
 			   "WE(source)=%d enc_capa=0x%x",
@@ -1612,11 +1677,25 @@ static int wpa_driver_wext_set_key_ext(void *priv, wpa_alg alg,
 	int ret = 0;
 	struct iw_encode_ext *ext;
 
+#ifdef ATHEROS_WAPI
+	if (alg == WPA_ALG_SMS4) {
+	    if (seq_len > IW_ENCODE_SEQ_MAX_SIZE * 2) {
+	        printf("%s: Invalid seq_len %lu\n",
+	               __FUNCTION__, (unsigned long)seq_len);
+	        return -1;
+	    }
+	} else if (seq_len > IW_ENCODE_SEQ_MAX_SIZE) {
+	    printf("%s: Invalid seq_len %lu\n",
+	           __FUNCTION__, (unsigned long)seq_len);
+	    return -1;
+	}
+#else
 	if (seq_len > IW_ENCODE_SEQ_MAX_SIZE) {
 		wpa_printf(MSG_DEBUG, "%s: Invalid seq_len %lu",
 			   __FUNCTION__, (unsigned long) seq_len);
 		return -1;
 	}
+#endif
 
 	ext = os_zalloc(sizeof(*ext) + key_len);
 	if (ext == NULL)
@@ -1657,6 +1736,16 @@ static int wpa_driver_wext_set_key_ext(void *priv, wpa_alg alg,
 	case WPA_ALG_CCMP:
 		ext->alg = IW_ENCODE_ALG_CCMP;
 		break;
+#ifdef ATHEROS_WAPI
+	case WPA_ALG_SMS4:
+	        ext->alg = IW_ENCODE_ALG_SMS4;
+	        break;
+#elif defined (TI_WAPI)
+        case WPA_ALG_WAPI:
+		ext->alg = IW_ENCODE_ALG_SMS4;
+		wpa_printf(MSG_DEBUG, "WPA_ALG_WAPI %d",ext->alg);
+		break;
+#endif
 	default:
 		wpa_printf(MSG_DEBUG, "%s: Unknown algorithm %d",
 			   __FUNCTION__, alg);
@@ -1665,8 +1754,17 @@ static int wpa_driver_wext_set_key_ext(void *priv, wpa_alg alg,
 	}
 
 	if (seq && seq_len) {
+#ifdef ATHEROS_WAPI
+	    if (alg == WPA_ALG_SMS4) {
+	        os_memcpy(ext->tx_seq, seq, seq_len);
+	        wpa_hexdump(MSG_DEBUG, "seq", seq, seq_len);
+	    } else {
+#endif
 		ext->ext_flags |= IW_ENCODE_EXT_RX_SEQ_VALID;
 		os_memcpy(ext->rx_seq, seq, seq_len);
+#ifdef ATHEROS_WAPI
+			}
+#endif
 	}
 
 	if (ioctl(drv->ioctl_sock, SIOCSIWENCODEEXT, &iwr) < 0) {
@@ -1827,19 +1925,45 @@ static int wpa_driver_wext_deauthenticate(void *priv, const u8 *addr,
 	return wpa_driver_wext_mlme(drv, addr, IW_MLME_DEAUTH, reason_code);
 }
 
+#ifdef ATHEROS_WAPI
+int wpa_driver_wext_set_gen_ie(void *priv, const u8 *ie,
+					size_t ie_len);
+#elif defined (TI_WAPI)
+int wpa_driver_wext_set_gen_ie(void *priv, const u8 *ie,
+				size_t ie_len);
+#else
+static int wpa_driver_wext_set_gen_ie(void *priv, const u8 *ie,
+					size_t ie_len);
+#endif
 
 static int wpa_driver_wext_disassociate(void *priv, const u8 *addr,
 					int reason_code)
 {
 	struct wpa_driver_wext_data *drv = priv;
+#ifdef ATHEROS_WAPI
+	int temp = 0;
+#endif
+
 	wpa_printf(MSG_DEBUG, "%s", __FUNCTION__);
+#ifdef ATHEROS_WAPI
+	/* Clear APP IE */
+	wpa_driver_wext_set_gen_ie(drv, (const u8 *)&temp, 0);
+#endif
 	return wpa_driver_wext_mlme(drv, addr, IW_MLME_DISASSOC,
 				    reason_code);
 }
 
+#ifdef ATHEROS_WAPI
+int wpa_driver_wext_set_gen_ie(void *priv, const u8 *ie,
+	                              size_t ie_len)
+#elif defined (TI_WAPI)
+int wpa_driver_wext_set_gen_ie(void *priv, const u8 *ie,
+	                              size_t ie_len)
 
+#else
 static int wpa_driver_wext_set_gen_ie(void *priv, const u8 *ie,
-				      size_t ie_len)
+	                              size_t ie_len)
+#endif
 {
 	struct wpa_driver_wext_data *drv = priv;
 	struct iwreq iwr;
@@ -1872,6 +1996,14 @@ static int wpa_driver_wext_cipher2wext(int cipher)
 		return IW_AUTH_CIPHER_CCMP;
 	case CIPHER_WEP104:
 		return IW_AUTH_CIPHER_WEP104;
+#ifdef ATHEROS_WAPI
+	case CIPHER_SMS4:
+	        return IW_AUTH_CIPHER_SMS4;
+#endif
+#ifdef TI_WAPI
+	case CIPHER_SMS4:
+		return IW_AUTH_CIPHER_SMS4;
+#endif
 	default:
 		return 0;
 	}
@@ -1973,6 +2105,11 @@ wpa_driver_wext_associate(void *priv,
 	if (wpa_driver_wext_set_gen_ie(drv, params->wpa_ie, params->wpa_ie_len)
 	    < 0)
 		ret = -1;
+
+#ifdef ATHEROS_WAPI
+		if (params->pairwise_suite!=CIPHER_SMS4 && params->group_suite!=CIPHER_SMS4)
+#endif
+		{
 	if (params->wpa_ie == NULL || params->wpa_ie_len == 0)
 		value = IW_AUTH_WPA_VERSION_DISABLED;
 	else if (params->wpa_ie[0] == RSN_INFO_ELEM)
@@ -1990,6 +2127,7 @@ wpa_driver_wext_associate(void *priv,
 	if (wpa_driver_wext_set_auth_param(drv,
 					   IW_AUTH_CIPHER_GROUP, value) < 0)
 		ret = -1;
+		}
 	value = wpa_driver_wext_keymgmt2wext(params->key_mgmt_suite);
 	if (wpa_driver_wext_set_auth_param(drv,
 					   IW_AUTH_KEY_MGMT, value) < 0)
@@ -2593,6 +2731,24 @@ static int wpa_driver_priv_driver_cmd(void *priv, char *cmd, char *buf, size_t b
 }
 #endif
 
+#ifdef ATHEROS_WAPI
+static int wpa_driver_wext_set_wapi(void * priv, int enabled)
+{
+    struct wpa_driver_wext_data *drv = priv;
+    int ret = 0;
+
+    wpa_printf(MSG_DEBUG, "%s: enabled=%d\n", __func__, enabled);
+#define IW_AUTH_WAPI_ENABLED     0x20
+    if (enabled) {
+	ret = wpa_driver_wext_set_auth_param(drv, IW_AUTH_WAPI_ENABLED, 1);
+    } else {
+	ret = wpa_driver_wext_set_auth_param(drv, IW_AUTH_WAPI_ENABLED, 0);
+    }
+
+    return ret;
+}
+#endif
+
 const struct wpa_driver_ops wpa_driver_wext_ops = {
 	.name = "wext",
 	.desc = "Linux wireless extensions (generic)",
@@ -2625,6 +2781,10 @@ const struct wpa_driver_ops wpa_driver_wext_ops = {
 	.mlme_add_sta = wpa_driver_wext_mlme_add_sta,
 	.mlme_remove_sta = wpa_driver_wext_mlme_remove_sta,
 #endif /* CONFIG_CLIENT_MLME */
+#ifdef ATHEROS_WAPI
+	.set_wpa_ie = wpa_driver_wext_set_gen_ie,
+	.set_wapi = wpa_driver_wext_set_wapi,
+#endif
 #ifdef ANDROID
 	.driver_cmd = wpa_driver_priv_driver_cmd,
 #endif

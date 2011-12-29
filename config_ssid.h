@@ -15,6 +15,10 @@
 #ifndef CONFIG_SSID_H
 #define CONFIG_SSID_H
 
+#ifdef TI_WAPI
+#include "ti_wapi.h"
+#endif
+
 #ifndef BIT
 #define BIT(n) (1 << (n))
 #endif
@@ -24,9 +28,16 @@
 #define WPA_CIPHER_WEP104 BIT(2)
 #define WPA_CIPHER_TKIP BIT(3)
 #define WPA_CIPHER_CCMP BIT(4)
+#ifdef ATHEROS_WAPI
+#define WPA_CIPHER_SMS4 BIT(5)
+#endif
 #ifdef CONFIG_IEEE80211W
 #define WPA_CIPHER_AES_128_CMAC BIT(5)
 #endif /* CONFIG_IEEE80211W */
+
+#ifdef TI_WAPI
+#define WPA_CIPHER_SMS4 BIT(6)
+#endif
 
 #define WPA_KEY_MGMT_IEEE8021X BIT(0)
 #define WPA_KEY_MGMT_PSK BIT(1)
@@ -34,9 +45,24 @@
 #define WPA_KEY_MGMT_IEEE8021X_NO_WPA BIT(3)
 #define WPA_KEY_MGMT_WPA_NONE BIT(4)
 
+#ifdef TI_WAPI
+#define WPA_KEY_MGMT_WAPI_PSK  BIT(5)
+#define WPA_KEY_MGMT_WAPI_CERT BIT(6)
+#endif
+
+#ifdef ATHEROS_WAPI
+#define WPA_KEY_MGMT_WAPI_PSK   BIT(5)
+#define WPA_KEY_MGMT_WAPI_CERT  BIT(6)
+#endif
+
 #define WPA_PROTO_WPA BIT(0)
 #define WPA_PROTO_RSN BIT(1)
-
+#ifdef ATHEROS_WAPI
+#define WPA_PROTO_WAPI          BIT(2)
+#endif
+#ifdef TI_WAPI
+#define WPA_PROTO_WAPI BIT(2)
+#endif
 #define WPA_AUTH_ALG_OPEN BIT(0)
 #define WPA_AUTH_ALG_SHARED BIT(1)
 #define WPA_AUTH_ALG_LEAP BIT(2)
@@ -56,6 +82,11 @@
 #define DEFAULT_GROUP (WPA_CIPHER_CCMP | WPA_CIPHER_TKIP | \
 		       WPA_CIPHER_WEP104 | WPA_CIPHER_WEP40)
 #define DEFAULT_FRAGMENT_SIZE 1398
+#ifdef ATHEROS_WAPI
+#define WAPI_KEY_TYPE_ASCII             0
+#define WAPI_KEY_TYPE_HEX               1
+#define DEFAULT_KEY_TYPE                WAPI_KEY_TYPE_ASCII
+#endif // ATHEROS_WAPI
 
 /**
  * struct wpa_ssid - Network configuration data
@@ -199,6 +230,13 @@ struct wpa_ssid {
 	 * such drivers to use hidden SSIDs.
 	 */
 	int scan_ssid;
+#ifdef TI_WAPI
+	char *wapi_psk;
+	char *user_cert_uri;
+	char *user_key_uri;
+	char *as_cert_uri;
+	int wapi_key_type;
+#endif
 
 #ifdef IEEE8021X_EAPOL
 
@@ -863,6 +901,13 @@ struct wpa_ssid {
 	 * will be used instead of this configured value.
 	 */
 	int frequency;
+#ifdef ATHEROS_WAPI
+    char *as_cert_uri;
+    char *user_cert_uri;
+    char *user_key_uri;
+    char *wapi_psk;
+    int   wapi_key_type;
+#endif
 };
 
 int wpa_config_allowed_eap_method(struct wpa_ssid *ssid, int vendor,

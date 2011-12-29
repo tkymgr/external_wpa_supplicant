@@ -140,11 +140,8 @@ struct wpa_ctrl * wpa_ctrl_open(const char *ctrl_path)
 
 void wpa_ctrl_close(struct wpa_ctrl *ctrl)
 {
-	if (ctrl == NULL)
-		return;
 	unlink(ctrl->local.sun_path);
-	if (ctrl->s >= 0)
-		close(ctrl->s);
+	close(ctrl->s);
 	os_free(ctrl);
 }
 
@@ -190,7 +187,7 @@ void wpa_ctrl_cleanup(void)
 
 #else /* CONFIG_CTRL_IFACE_UNIX */
 #ifdef ANDROID
-void wpa_ctrl_cleanup(void)
+void wpa_ctrl_cleanup()
 {
 }
 #endif /* ANDROID */
@@ -295,8 +292,9 @@ int wpa_ctrl_request(struct wpa_ctrl *ctrl, const char *cmd, size_t cmd_len,
 	os_free(cmd_buf);
 
 	for (;;) {
+/* SEMC (DMS00884026) 10 seconds timeout using ANR, reduce to 5. */
 #ifdef ANDROID
-		tv.tv_sec = 10;
+		tv.tv_sec = 5;
 #else
 		tv.tv_sec = 2;
 #endif

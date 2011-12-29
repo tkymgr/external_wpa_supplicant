@@ -19,6 +19,10 @@
 
 #include "defs.h"
 
+#ifdef TI_WAPI
+#include "ti_wapi.h"
+#endif
+
 #define AUTH_ALG_OPEN_SYSTEM	0x01
 #define AUTH_ALG_SHARED_KEY	0x02
 #define AUTH_ALG_LEAP		0x04
@@ -30,7 +34,14 @@
 #define IEEE80211_CAP_IBSS	0x0002
 #define IEEE80211_CAP_PRIVACY	0x0010
 
+#ifdef ATHEROS_WAPI
+#define SSID_MAX_WAPI_IE_LEN 100
+#endif
+#ifdef TI_WAPI
+#define SSID_MAX_WPA_IE_LEN 80
+#else
 #define SSID_MAX_WPA_IE_LEN 40
+#endif
 /**
  * struct wpa_scan_result - Scan results
  * @bssid: BSSID
@@ -58,6 +69,13 @@ struct wpa_scan_result {
 	u8 wpa_ie[SSID_MAX_WPA_IE_LEN];
 	size_t wpa_ie_len;
 	u8 rsn_ie[SSID_MAX_WPA_IE_LEN];
+#ifdef ATHEROS_WAPI
+	size_t wapi_ie_len;
+	unsigned char wapi_ie[SSID_MAX_WAPI_IE_LEN];
+#elif defined (TI_WAPI)
+	u8 wapi_ie[SSID_MAX_WPA_IE_LEN];
+	size_t wapi_ie_len;
+#endif
 	size_t rsn_ie_len;
 	int freq;
 	u16 caps;
@@ -163,6 +181,11 @@ struct wpa_driver_capa {
 #define WPA_DRIVER_CAPA_KEY_MGMT_WPA_PSK	0x00000004
 #define WPA_DRIVER_CAPA_KEY_MGMT_WPA2_PSK	0x00000008
 #define WPA_DRIVER_CAPA_KEY_MGMT_WPA_NONE	0x00000010
+#ifdef ATHEROS_WAPI
+#define	WPA_DRIVER_CAPA_KEY_MGMT_WAPI_PSK   0x00000020
+#endif
+
+
 	unsigned int key_mgmt;
 
 #define WPA_DRIVER_CAPA_ENC_WEP40	0x00000001
@@ -224,8 +247,8 @@ struct wpa_hw_modes {
 
 
 struct ieee80211_rx_status {
-        int channel;
-        int ssi;
+	int channel;
+	int ssi;
 };
 
 
@@ -752,6 +775,70 @@ struct wpa_driver_ops {
 	 * (management frame processing) to wpa_supplicant.
 	 */
 	 int (*mlme_remove_sta)(void *priv, const u8 *addr);
+
+#ifdef ATHEROS_WAPI
+	/**
+	 * set_port_state - set the driver's port state (open or closed), in external authentication
+	 * mode
+	 *
+	 * @priv: Private driver interface data
+	 * @port_state: 0 - closed, 1 - open
+	 * Returns: 0 on success, -1 on failure
+	 *
+	 * This function is called by the supplicant when the authorization process is complete.
+	 * It indicates the driver to open or close the data path
+	 */
+	int (*set_port_state)(void *priv, const int port_state);
+
+	/**
+	  * set_generic_ethertype - set the driver's generic ethertype value.
+	  * @priv: Private driver interface data
+	  * @ethertype: 16bit EtherType value
+	  * Returns: 0 on success, -1 on failure
+	  *
+	  * This function is called by the supplicant to allow another Ethertype to pass-through
+	  * during the authentication process. The default is to allow only EAPOL packets to
+	  * pass.
+	  */
+	int (*set_generic_ethertype)(void *priv, const int ethertype);
+
+	int (*set_wpa_ie)(void *priv, const u8 *wpa_ie, size_t wpa_ie_len);
+
+	int (*set_wapi)(void *priv, int enabled);
+#elif defined (TI_WAPI)
+	/**
+	 * set_port_state - set the driver's port state (open or closed), in external authentication mode
+	 * @priv: Private driver interface data
+	 * @port_state: 0 - closed, 1 - open
+	 * Returns: 0 on success, -1 on failure
+	 *
+	 * This function is called by the supplicant when the authorization process is complete.
+	 * It indicates the driver to open or close the data path
+	 */
+	int (*set_port_state)(void *priv, const int port_state);
+
+	/**
+	 * set_generic_ethertype - set the driver's generic ethertype value.
+	 * @priv: Private driver interface data
+	 * @ethertype: 16bit EtherType value
+	 * Returns: 0 on success, -1 on failure
+	 *
+	 * This function is called by the supplicant to allow another Ethertype to pass-through during+
+	 * the authentication process. The default is to allow only EAPOL packets to pass.
+	 */
+	int (*set_generic_ethertype)(void *priv, const int ethertype);
+
+	/**
+	* set_external_mode - set the driver's external mode setting.
+	* @priv: Private driver interface data
+	* @mode: 1 - external mode, 0 - internal mode
+	* Returns: 0 on success, -1 on failure
+	*
+	* This function is called by the supplicant to allow for it to control the authentication+
+	* process, rather than the driver.
+	*/
+	int (*set_external_mode)(void *priv, const int mode);
+#endif
 
     /**
      * driver_cmd - execute driver-specific command

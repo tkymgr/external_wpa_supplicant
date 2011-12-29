@@ -584,7 +584,11 @@ static void wpa_supplicant_global_ctrl_iface_receive(int sock, void *eloop_ctx,
 						     void *sock_ctx)
 {
 	struct wpa_global *global = eloop_ctx;
+#ifdef TI_WAPI
+	char buf[WAPI_CTRL_IFACE_LEN];
+#else
 	char buf[256];
+#endif
 	int res;
 	struct sockaddr_un from;
 	socklen_t fromlen = sizeof(from);

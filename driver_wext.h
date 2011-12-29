@@ -45,6 +45,12 @@ void wpa_driver_wext_deinit(void *priv);
 int wpa_driver_wext_set_operstate(void *priv, int state);
 int wpa_driver_wext_get_version(struct wpa_driver_wext_data *drv);
 
+#ifdef ATHEROS_WAPI
+int wpa_driver_wext_set_gen_ie(void *priv, const u8 *ie, size_t ie_len);
+#elif defined (TI_WAPI)
+int wpa_driver_wext_set_gen_ie(void *priv, const u8 *ie, size_t ie_len);
+#endif /* ATHEROS_WAPI */
+
 #ifdef ANDROID
 #define WEXT_NUMBER_SCAN_CHANNELS_FCC	11
 #define WEXT_NUMBER_SCAN_CHANNELS_ETSI	13

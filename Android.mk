@@ -13,13 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-ifndef WPA_SUPPLICANT_VERSION
-WPA_SUPPLICANT_VERSION := VER_0_5_X
-endif
-
-ifeq ($(WPA_SUPPLICANT_VERSION),VER_0_5_X)
-
 LOCAL_PATH := $(call my-dir)
+
 
 WPA_BUILD_SUPPLICANT := false
 ifneq ($(TARGET_SIMULATOR),true)
@@ -49,7 +44,11 @@ INCLUDES = external/openssl/include frameworks/base/cmds/keystore
   
 OBJS = config.c common.c md5.c md4.c rc4.c sha1.c des.c
 OBJS_p = wpa_passphrase.c sha1.c md5.c md4.c common.c des.c
+ifdef TI_WAPI
+OBJS_c = wpa_cli.c wpa_ctrl.c base64.c
+else
 OBJS_c = wpa_cli.c wpa_ctrl.c
+endif
 
 ifndef CONFIG_OS
 ifdef CONFIG_NATIVE_WINDOWS
@@ -119,6 +118,16 @@ OBJS_d += driver_madwifi.c
 CONFIG_WIRELESS_EXTENSION=y
 endif
 
+ifdef CONFIG_DRIVER_AR6000
+L_CFLAGS += -DCONFIG_DRIVER_AR6000
+INCLUDES +=  vendor/atheros/wlan/host/wpa_supplicant/include
+OBJS_d += ../../vendor/atheros/wlan/host/wpa_supplicant/src/driver_ar6000.c
+CONFIG_WIRELESS_EXTENSION=y
+ifdef CONFIG_WAPI
+ATHEROS_WAPI=y
+endif
+endif
+
 ifdef CONFIG_DRIVER_ATMEL
 L_CFLAGS += -DCONFIG_DRIVER_ATMEL
 OBJS_d += driver_atmel.c
@@ -174,7 +183,25 @@ endif
 
 ifdef CONFIG_DRIVER_CUSTOM
 L_CFLAGS += -DCONFIG_DRIVER_CUSTOM
+ifdef CONFIG_WAPI
+TI_WAPI=y
 endif
+endif
+
+ifdef TI_WAPI
+OBJS += ec.c gem.c ti_wapi.c
+L_CFLAGS += -DTI_WAPI
+NEED_SHA256=y
+CONFIG_INTERNAL_SHA256=y
+endif
+
+ifdef ATHEROS_WAPI
+include $(CLEAR_VARS)
+LOCAL_PREBUILT_LIBS := libiwnwai_asue.a libsms4.a libecc.a
+include $(BUILD_MULTI_PREBUILT)
+LOCAL_STATIC_LIBRARIES := libiwnwai_asue libsms4 libecc
+endif /* ATHEROS_WAPI */
+include $(CLEAR_VARS)
 
 ifndef CONFIG_L2_PACKET
 CONFIG_L2_PACKET=linux
@@ -640,6 +667,10 @@ ifdef CONFIG_DEBUG_FILE
 L_CFLAGS += -DCONFIG_DEBUG_FILE
 endif
 
+ifdef ATHEROS_WAPI
+L_CFLAGS += -DATHEROS_WAPI
+OBJS += atheros_wapi.c
+endif
 OBJS += wpa_supplicant.c events.c
 OBJS_t := $(OBJS) eapol_test.c radius.c radius_client.c
 OBJS_t2 := $(OBJS) preauth_test.c
@@ -675,6 +706,11 @@ LOCAL_MODULE := wpa_supplicant
 ifdef CONFIG_DRIVER_CUSTOM
 LOCAL_STATIC_LIBRARIES := libCustomWifi
 endif
+
+ifdef ATHEROS_WAPI
+LOCAL_STATIC_LIBRARIES += libiwnwai_asue libsms4 libecc
+endif
+
 ifneq ($(BOARD_WPA_SUPPLICANT_PRIVATE_LIB),)
 LOCAL_STATIC_LIBRARIES += $(BOARD_WPA_SUPPLICANT_PRIVATE_LIB)
 endif
@@ -722,5 +758,3 @@ LOCAL_SHARED_LIBRARIES := libcutils
 LOCAL_COPY_HEADERS_TO := libwpa_client
 LOCAL_COPY_HEADERS := wpa_ctrl.h
 include $(BUILD_SHARED_LIBRARY)
-
-endif # VER_0_5_X

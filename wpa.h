@@ -28,7 +28,9 @@
 
 #define GENERIC_INFO_ELEM 0xdd
 #define RSN_INFO_ELEM 0x30
-
+#ifdef TI_WAPI
+#define WAPI_INFO_ELEM 0x44
+#endif /* TI_WAPI */
 enum {
 	REASON_UNSPECIFIED = 1,
 	REASON_DEAUTH_LEAVING = 3,
@@ -59,7 +61,10 @@ struct wpa_sm_ctx {
 
 	void (*set_state)(void *ctx, wpa_states state);
 	wpa_states (*get_state)(void *ctx);
-	void (*deauthenticate)(void * ctx, int reason_code); 
+#ifdef ATHEROS_WAPI
+	void (*req_scan)(void *ctx, int sec, int usec);
+#endif
+	void (*deauthenticate)(void * ctx, int reason_code);
 	void (*disassociate)(void *ctx, int reason_code);
 	int (*set_key)(void *ctx, wpa_alg alg,
 		       const u8 *addr, int key_idx, int set_tx,
@@ -81,6 +86,11 @@ struct wpa_sm_ctx {
 							  const char *name);
 	int (*mlme_setprotection)(void *ctx, const u8 *addr,
 				  int protection_type, int key_type);
+#ifdef ATHEROS_WAPI
+	int (*set_port_state)(void *ctx, int new_state);
+#elif defined (TI_WAPI)
+	int (*set_port_state)(void *ctx, int new_state);
+#endif
 };
 
 
@@ -95,6 +105,16 @@ enum wpa_sm_conf_params {
 	WPA_PARAM_MGMT_GROUP
 };
 
+#ifdef ATHEROS_WAPI
+#define BKID_LEN                 16
+#define MAX_TURTLENECK_NUMBER       16
+/* BKID */
+typedef struct _bkid
+{
+    u8                 bkidentify[BKID_LEN];                    /* BKID */
+}bkid;
+#endif
+
 struct wpa_ie_data {
 	int proto;
 	int pairwise_cipher;
@@ -105,6 +125,20 @@ struct wpa_ie_data {
 	const u8 *pmkid;
 	int mgmt_group_cipher;
 };
+
+#ifdef ATHEROS_WAPI
+struct wapi_ie_data {
+	u16				 version;
+	u16				 akmnumber;
+	int				 *akmlist;
+	u16				 singlecodenumber;
+	int			     *singlecodelist;
+	int				 multicode;
+	u16				 wapiability;
+	u16				 bkidnumber;
+	bkid		     *bkidlist;
+};
+#endif
 
 #ifndef CONFIG_NO_WPA
 
@@ -147,6 +181,11 @@ void wpa_sm_aborted_cached(struct wpa_sm *sm);
 int wpa_sm_rx_eapol(struct wpa_sm *sm, const u8 *src_addr,
 		    const u8 *buf, size_t len);
 int wpa_sm_parse_own_wpa_ie(struct wpa_sm *sm, struct wpa_ie_data *data);
+
+#ifdef ATHEROS_WAPI
+int wpa_parse_wapi_ie(const u8 *wapi_ie, size_t wapi_ie_len,
+	              struct wapi_ie_data *data);
+#endif
 
 #else /* CONFIG_NO_WPA */
 
@@ -282,6 +321,14 @@ static inline int wpa_sm_parse_own_wpa_ie(struct wpa_sm *sm,
 {
 	return -1;
 }
+
+#ifdef ATHEROS_WAPI
+static inline int wpa_parse_wapi_ie(const u8 *wapi_ie, size_t wapi_ie_len,
+	                            struct wapi_ie_data *data)
+{
+    return -1;
+}
+#endif
 
 #endif /* CONFIG_NO_WPA */
 

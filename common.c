@@ -16,7 +16,6 @@
 
 #include "common.h"
 
-
 #ifdef CONFIG_DEBUG_FILE
 static FILE *out_file = NULL;
 #endif /* CONFIG_DEBUG_FILE */

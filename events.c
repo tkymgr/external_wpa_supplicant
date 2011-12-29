@@ -28,7 +28,12 @@
 #include "wpa_ctrl.h"
 #include "eap.h"
 #include "ctrl_iface_dbus.h"
-
+#ifdef ATHEROS_WAPI
+#include "atheros_wapi.h"
+#endif
+#ifdef TI_WAPI
+#include "ti_wapi.h"
+#endif
 
 static int wpa_supplicant_select_config(struct wpa_supplicant *wpa_s)
 {
@@ -52,7 +57,13 @@ static int wpa_supplicant_select_config(struct wpa_supplicant *wpa_s)
 	wpa_printf(MSG_DEBUG, "Network configuration found for the current "
 		   "AP");
 	if (ssid->key_mgmt & (WPA_KEY_MGMT_PSK | WPA_KEY_MGMT_IEEE8021X |
+#ifdef ATHEROS_WAPI
+			      WPA_KEY_MGMT_WPA_NONE | WPA_KEY_MGMT_WAPI_PSK |
+	                      WPA_KEY_MGMT_WAPI_CERT)) {
+
+#else
 			      WPA_KEY_MGMT_WPA_NONE)) {
+#endif
 		u8 wpa_ie[80];
 		size_t wpa_ie_len = sizeof(wpa_ie);
 		wpa_supplicant_set_suites(wpa_s, NULL, ssid,
@@ -65,8 +76,13 @@ static int wpa_supplicant_select_config(struct wpa_supplicant *wpa_s)
 		eapol_sm_invalidate_cached_session(wpa_s->eapol);
 	wpa_s->current_ssid = ssid;
 	wpa_sm_set_config(wpa_s->wpa, wpa_s->current_ssid);
+#ifdef ATHEROS_WAPI
+	if (wpa_s->current_ssid->proto != WPA_PROTO_WAPI) {
+		wpa_supplicant_initiate_eapol(wpa_s);
+	}
+#else
 	wpa_supplicant_initiate_eapol(wpa_s);
-
+#endif
 	return 0;
 }
 
@@ -90,10 +106,18 @@ void wpa_supplicant_mark_disassoc(struct wpa_supplicant *wpa_s)
 	wpa_supplicant_set_state(wpa_s, WPA_DISCONNECTED);
 	os_memset(wpa_s->bssid, 0, ETH_ALEN);
 	os_memset(wpa_s->pending_bssid, 0, ETH_ALEN);
+#ifdef ATHEROS_WAPI
+    if (wpa_s->key_mgmt != WPA_KEY_MGMT_WAPI_PSK &&
+	wpa_s->key_mgmt != WPA_KEY_MGMT_WAPI_CERT)
+    {
+#endif
 	eapol_sm_notify_portEnabled(wpa_s->eapol, FALSE);
 	eapol_sm_notify_portValid(wpa_s->eapol, FALSE);
 	if (wpa_s->key_mgmt == WPA_KEY_MGMT_PSK)
 		eapol_sm_notify_eap_success(wpa_s->eapol, FALSE);
+#ifdef ATHEROS_WAPI
+    }
+#endif
 }
 
 
@@ -342,6 +366,19 @@ static int wpa_supplicant_ssid_bss_match(struct wpa_ssid *ssid,
 		wpa_printf(MSG_DEBUG, "   selected based on WPA IE");
 		return 1;
 	}
+#ifdef TI_WAPI
+	if ((ssid->proto & WPA_PROTO_WAPI) && bss->wapi_ie_len > 0) {
+		wpa_printf(MSG_WAPI, "   selected based on WAPI IE");
+		return 1;
+	}
+#endif
+#ifdef ATHEROS_WAPI
+	while ((ssid->proto & WPA_PROTO_WAPI) && bss->wapi_ie_len > 0) {
+	    /* Check whether match wapi */
+	    /* TODO */
+	    return 1;
+	}
+#endif
 
 	if (proto_match == 0)
 		wpa_printf(MSG_DEBUG, "   skip - no WPA/RSN proto match");
@@ -381,7 +418,13 @@ wpa_supplicant_select_bss(struct wpa_supplicant *wpa_s, struct wpa_ssid *group,
 			continue;
 		}
 
+#ifdef ATHEROS_WAPI
+		if (bss->wpa_ie_len == 0 && bss->rsn_ie_len == 0 && bss->wapi_ie_len == 0) {
+#elif defined (TI_WAPI)
+		if (bss->wpa_ie_len == 0 && bss->rsn_ie_len == 0 && bss->wapi_ie_len == 0) {
+#else
 		if (bss->wpa_ie_len == 0 && bss->rsn_ie_len == 0) {
+#endif
 			wpa_printf(MSG_DEBUG, "   skip - no WPA/RSN IE");
 			continue;
 		}
@@ -455,7 +498,7 @@ wpa_supplicant_select_bss(struct wpa_supplicant *wpa_s, struct wpa_ssid *group,
 					   "BSSID mismatch");
 				continue;
 			}
-			
+
 			if (!(ssid->key_mgmt & WPA_KEY_MGMT_NONE) &&
 			    !(ssid->key_mgmt & WPA_KEY_MGMT_IEEE8021X_NO_WPA))
 			{
@@ -464,7 +507,7 @@ wpa_supplicant_select_bss(struct wpa_supplicant *wpa_s, struct wpa_ssid *group,
 				continue;
 			}
 
-			if ((ssid->key_mgmt & 
+			if ((ssid->key_mgmt &
 			     (WPA_KEY_MGMT_IEEE8021X | WPA_KEY_MGMT_PSK)) &&
 			    (bss->wpa_ie_len != 0 || bss->rsn_ie_len != 0)) {
 				wpa_printf(MSG_DEBUG, "   skip - "
@@ -665,6 +708,55 @@ static void wpa_supplicant_event_associnfo(struct wpa_supplicant *wpa_s,
 		wpa_sm_set_ap_wpa_ie(wpa_s->wpa, NULL, 0);
 	if (!rsn_found)
 		wpa_sm_set_ap_rsn_ie(wpa_s->wpa, NULL, 0);
+#ifdef TI_WAPI
+	p = data->assoc_info.req_ies;
+	l = data->assoc_info.req_ies_len;
+	found = 0;
+
+	/* Go through the IEs and make a copy of the WAPI IE, if present. */
+	while (p && l >= 2) {
+		len = p[1] + 2;
+
+		if (p[0] == WAPI_INFO_ELEM) {
+			if (wapi_set_assoc_ie(wpa_s->wapi, p, len))
+				break;
+			found = 1;
+			break;
+		}
+
+		l -= len;
+		p += len;
+	}
+
+	if (!found && data->assoc_info.req_ies) {
+		wapi_set_assoc_ie(wpa_s->wapi, NULL, 0);
+		wpa_printf(MSG_WAPI, "WAPI %s: (wapi) no wapi info element found in "
+				"association request", __func__);
+	}
+
+	/* WPA/RSN IE from Beacon/ProbeResp */
+	p = data->assoc_info.beacon_ies;
+	l = data->assoc_info.beacon_ies_len;
+
+	/* Go through the IEs and make a copy of the WPA/RSN IEs, if present.
+ * 	 */
+	found = 0;
+
+	while (p && l >= 2) {
+		len = p[1] + 2;
+
+		if (!found && p[0] == WAPI_INFO_ELEM) {
+			found = 1;
+			wapi_set_ap_ie(wpa_s->wapi, p, len);
+		}
+
+		l -= len;
+		p += len;
+	}
+
+	if (!found && data->assoc_info.beacon_ies)
+		wapi_set_ap_ie(wpa_s->wapi, NULL, 0);
+#endif
 }
 
 
@@ -705,7 +797,20 @@ static void wpa_supplicant_event_assoc(struct wpa_supplicant *wpa_s,
 		wpa_supplicant_scard_init(wpa_s, wpa_s->current_ssid);
 	}
 	wpa_sm_notify_assoc(wpa_s->wpa, bssid);
+#ifdef ATHEROS_WAPI
+	if (wpa_s->key_mgmt == WPA_KEY_MGMT_WAPI_PSK ||
+	    wpa_s->key_mgmt == WPA_KEY_MGMT_WAPI_CERT)
+	{
+	    wapi_supplicant_event(wpa_s, EVENT_ASSOC, data);
+	} else {
+#endif
 	l2_packet_notify_auth_start(wpa_s->l2);
+#ifdef TI_WAPI
+	wpa_printf(MSG_WAPI, "WAPIDBG %s:", __func__);
+	wapi_notify_assoc(wpa_s->wapi,bssid);
+	if (wpa_s->wapi_l2)
+		l2_packet_notify_auth_start(wpa_s->wapi_l2); /* empty implementation */
+#endif
 
 	/*
 	 * Set portEnabled first to FALSE in order to get EAP state machine out
@@ -722,6 +827,10 @@ static void wpa_supplicant_event_assoc(struct wpa_supplicant *wpa_s,
 	/* 802.1X::portControl = Auto */
 	eapol_sm_notify_portEnabled(wpa_s->eapol, TRUE);
 	wpa_s->eapol_received = 0;
+#ifdef ATHEROS_WAPI
+	}
+#endif
+
 	if (wpa_s->key_mgmt == WPA_KEY_MGMT_NONE ||
 	    wpa_s->key_mgmt == WPA_KEY_MGMT_WPA_NONE) {
 		wpa_supplicant_cancel_auth_timeout(wpa_s);
@@ -748,6 +857,13 @@ static void wpa_supplicant_event_disassoc(struct wpa_supplicant *wpa_s)
 			   "IBSS/WPA-None mode");
 		return;
 	}
+#ifdef ATHEROS_WAPI
+	if (wpa_s->key_mgmt == WPA_KEY_MGMT_WAPI_PSK ||
+	    wpa_s->key_mgmt == WPA_KEY_MGMT_WAPI_CERT)
+	{
+	    wapi_supplicant_event(wpa_s, EVENT_DISASSOC, NULL);
+	}
+#endif // ATHEROS_WAPI
 
 	if (wpa_s->wpa_state == WPA_4WAY_HANDSHAKE &&
 	    wpa_s->key_mgmt == WPA_KEY_MGMT_PSK) {
@@ -763,6 +879,9 @@ static void wpa_supplicant_event_disassoc(struct wpa_supplicant *wpa_s)
 	wpa_sm_notify_disassoc(wpa_s->wpa);
 	wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_DISCONNECTED "- Disconnect event - "
 		"remove keys");
+#ifdef TI_WAPI
+	wapi_notify_disassoc(wpa_s->wapi);
+#endif
 	if (wpa_supplicant_dynamic_keys(wpa_s)) {
 		wpa_s->keys_cleared = 0;
 		wpa_clear_keys(wpa_s, wpa_s->bssid);
@@ -778,6 +897,13 @@ wpa_supplicant_event_michael_mic_failure(struct wpa_supplicant *wpa_s,
 	int pairwise;
 	struct os_time t;
 
+#ifdef TI_WAPI
+	if (wpa_s->pairwise_cipher == WPA_CIPHER_SMS4) {
+		wpa_msg(wpa_s, MSG_WAPI, "WAPI WAPI Ignoring MIC failure");
+		return;
+	}
+	/* TODO: (wapi) need to add better support to MIC failures */
+#endif
 	wpa_msg(wpa_s, MSG_WARNING, "Michael MIC failure detected");
 	pairwise = (data && data->michael_mic_failure.unicast);
 	wpa_sm_key_request(wpa_s->wpa, 1, pairwise);
@@ -833,6 +959,14 @@ wpa_supplicant_event_interface_status(struct wpa_supplicant *wpa_s,
 		wpa_supplicant_mark_disassoc(wpa_s);
 		l2_packet_deinit(wpa_s->l2);
 		wpa_s->l2 = NULL;
+#ifdef ATHEROS_WAPI
+	        l2_packet_deinit(wpa_s->l2_wapi);
+	        wpa_s->l2_wapi = NULL;
+#endif
+#ifdef TI_WAPI
+		l2_packet_deinit(wpa_s->wapi_l2);
+		wpa_s->wapi_l2 = NULL;
+#endif
 		break;
 	}
 }

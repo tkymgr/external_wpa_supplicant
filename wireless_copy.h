@@ -589,6 +589,13 @@
 #define IW_AUTH_CIPHER_TKIP	0x00000004
 #define IW_AUTH_CIPHER_CCMP	0x00000008
 #define IW_AUTH_CIPHER_WEP104	0x00000010
+#ifdef ATHEROS_WAPI
+#define IW_AUTH_CIPHER_SMS4     0x00000020
+#endif
+#ifdef TI_WAPI
+#define IW_AUTH_CIPHER_SMS4    0x00000020
+#endif
+
 
 /* IW_AUTH_KEY_MGMT values (bit field) */
 #define IW_AUTH_KEY_MGMT_802_1X	1
@@ -612,6 +619,13 @@
 #define IW_ENCODE_ALG_TKIP	2
 #define IW_ENCODE_ALG_CCMP	3
 #define IW_ENCODE_ALG_PMK	4
+#ifdef TI_WAPI
+#define IW_ENCODE_ALG_SMS4       5
+#endif /* TI_WAPI */
+
+#ifdef ATHEROS_WAPI
+#define IW_ENCODE_ALG_SMS4       0x20
+#endif /* ATHEROS_WAPI */
 /* struct iw_encode_ext ->ext_flags */
 #define IW_ENCODE_EXT_TX_SEQ_VALID	0x00000001
 #define IW_ENCODE_EXT_RX_SEQ_VALID	0x00000002

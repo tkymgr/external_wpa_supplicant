@@ -22,6 +22,12 @@
 #include "l2_packet.h"
 #include "config.h"
 
+#ifdef TI_WAPI
+#include "ti_wapi.h"
+#include <openssl/bn.h>
+#include "common.h"
+#endif
+
 
 /*
  * Structure for network configuration parsing. This data is used to implement
@@ -91,14 +97,6 @@ static int wpa_config_parse_str(const struct parse_data *data,
 	size_t res_len, *dst_len;
 	char **dst, *tmp;
 
-	if (os_strcmp(value, "NULL") == 0) {
-		wpa_printf(MSG_DEBUG, "Unset configuration string '%s'",
-			   data->name);
-		tmp = NULL;
-		res_len = 0;
-		goto set;
-	}
-
 	tmp = wpa_config_parse_string(value, &res_len);
 	if (tmp == NULL) {
 		wpa_printf(MSG_ERROR, "Line %d: failed to parse %s '%s'.",
@@ -131,7 +129,6 @@ static int wpa_config_parse_str(const struct parse_data *data,
 		return -1;
 	}
 
-set:
 	dst = (char **) (((u8 *) ssid) + (long) data->param1);
 	dst_len = (size_t *) (((u8 *) ssid) + (long) data->param2);
 	os_free(*dst);
@@ -312,6 +309,179 @@ static char * wpa_config_write_bssid(const struct parse_data *data,
 	return value;
 }
 
+#ifdef TI_WAPI
+static int wpa_config_parse_wapi_psk(const struct parse_data *data,
+				struct wpa_ssid *ssid, int line,
+				const char *value)
+{
+	const char *pos;
+	size_t len;
+
+	if (*value != '"')
+		return -1;
+
+	value++;
+	pos = os_strrchr(value, '"');
+	if (pos)
+		len = pos - value;
+	else
+		len = os_strlen(value);
+
+	wpa_hexdump_ascii_key(MSG_MSGDUMP, "WAPI PSK (ASCII passphrase)",
+				  (u8 *) value, len);
+
+	os_free(ssid->wapi_psk);
+	ssid->wapi_psk = os_malloc(WAPI_MAX_PSK_HEX_LEN);
+	if (ssid->wapi_psk == NULL)
+		return -1;
+	os_memset(ssid->wapi_psk, 0x00, WAPI_MAX_PSK_HEX_LEN);
+	os_memcpy(ssid->wapi_psk, value, len);
+	ssid->wapi_psk[len] = '\0';
+
+	ssid->key_mgmt = WPA_KEY_MGMT_WAPI_PSK;
+	ssid->proto    = WPA_PROTO_WAPI;
+	//ssid->wapi_key_type = WAPI_PSK_MODE_ASCII;
+
+	return 0;
+}
+
+
+static char * wpa_config_write_wapi_psk(const struct parse_data *data,
+				   struct wpa_ssid *ssid)
+{
+	if (ssid->wapi_psk)
+		return wpa_config_write_string_ascii(
+			(const u8 *) ssid->wapi_psk,
+			os_strlen(ssid->wapi_psk));
+
+	return NULL;
+}
+
+static int wpa_config_parse_user_cert_uri(const struct parse_data *data,
+				struct wpa_ssid *ssid, int line,
+				const char *value)
+{
+	const char *pos;
+	size_t len;
+
+	if (*value == '"') {
+		value++;
+		pos = os_strrchr(value, '"');
+		len = pos - value;
+	} else {
+		len = os_strlen(value);
+	}
+
+	wpa_hexdump_ascii_key(MSG_MSGDUMP, "WAPI CERT (filename)",
+				  (u8 *) value, len);
+
+	os_free(ssid->user_cert_uri);
+	ssid->user_cert_uri = os_malloc(len + 1);
+	if (ssid->user_cert_uri == NULL)
+		return -1;
+	os_memcpy(ssid->user_cert_uri, value, len);
+	ssid->user_cert_uri[len] = '\0';
+
+	ssid->key_mgmt = WPA_KEY_MGMT_WAPI_CERT;
+	ssid->proto    = WPA_PROTO_WAPI;
+
+	return 0;
+}
+
+static char * wpa_config_write_user_cert_uri(const struct parse_data *data,
+				   struct wpa_ssid *ssid)
+{
+	if (ssid->user_cert_uri)
+		return wpa_config_write_string_ascii(
+			(const u8 *) ssid->user_cert_uri,
+			os_strlen(ssid->user_cert_uri));
+	return NULL;
+}
+
+
+static int wpa_config_parse_as_cert_uri(const struct parse_data *data,
+				struct wpa_ssid *ssid, int line,
+				const char *value)
+{
+	const char *pos;
+	size_t len;
+
+	if (*value == '"') {
+		value++;
+		pos = os_strrchr(value, '"');
+		len = pos - value;
+	} else {
+		len = os_strlen(value);
+	}
+
+	wpa_hexdump_ascii_key(MSG_MSGDUMP, "WAPI PRIV KEY (filename)",
+				  (u8 *) value, len);
+
+	os_free(ssid->as_cert_uri);
+	ssid->as_cert_uri = os_malloc(len + 1);
+	if (ssid->as_cert_uri == NULL)
+		return -1;
+	os_memcpy(ssid->as_cert_uri, value, len);
+	ssid->as_cert_uri[len] = '\0';
+
+	ssid->key_mgmt = WPA_KEY_MGMT_WAPI_CERT;
+	ssid->proto    = WPA_PROTO_WAPI;
+
+	return 0;
+}
+
+static char * wpa_config_write_as_cert_uri(const struct parse_data *data,
+				   struct wpa_ssid *ssid)
+{
+	if (ssid->as_cert_uri)
+		return wpa_config_write_string_ascii(
+			(const u8 *) ssid->as_cert_uri,
+			os_strlen(ssid->as_cert_uri));
+	return NULL;
+}
+
+static int wpa_config_parse_user_key_uri(const struct parse_data *data,
+				struct wpa_ssid *ssid, int line,
+				const char *value)
+{
+	const char *pos;
+	size_t len;
+
+	if (*value == '"') {
+		value++;
+		pos = os_strrchr(value, '"');
+		len = pos - value;
+	} else {
+		len = os_strlen(value);
+	}
+
+	wpa_hexdump_ascii_key(MSG_MSGDUMP, "WAPI PRIV KEY (filename)",
+				  (u8 *) value, len);
+
+	os_free(ssid->user_key_uri);
+	ssid->user_key_uri = os_malloc(len + 1);
+	if (ssid->user_key_uri == NULL)
+		return -1;
+	os_memcpy(ssid->user_key_uri, value, len);
+	ssid->user_key_uri[len] = '\0';
+
+	ssid->key_mgmt = WPA_KEY_MGMT_WAPI_CERT;
+	ssid->proto    = WPA_PROTO_WAPI;
+
+	return 0;
+}
+
+static char * wpa_config_write_user_key_uri(const struct parse_data *data,
+				   struct wpa_ssid *ssid)
+{
+	if (ssid->user_key_uri)
+		return wpa_config_write_string_ascii(
+			(const u8 *) ssid->user_key_uri,
+			os_strlen(ssid->user_key_uri));
+	return NULL;
+}
+#endif
+
 
 static int wpa_config_parse_psk(const struct parse_data *data,
 				struct wpa_ssid *ssid, int line,
@@ -378,6 +548,206 @@ static char * wpa_config_write_psk(const struct parse_data *data,
 	return NULL;
 }
 
+#if defined(ATHEROS_WAPI)
+static int
+wpa_config_parse_wapi_psk(const struct parse_data *data,
+	                  struct wpa_ssid *ssid, int line,
+	                  const char *value)
+{
+    if (*value == '"') {
+	const char *pos;
+	size_t len;
+
+	value++;
+	pos = os_strrchr(value, '"');
+	if (pos) {
+	    len = pos - value;
+	} else {
+	    len = os_strlen(value);
+	}
+
+
+	if (len > 64) {
+	    wpa_printf(MSG_ERROR, "Line %d: Invalid passphrase "
+	               "length %lu (expected: 1..16) '%s'.",
+	               line, (unsigned long) len, value);
+	    return -1;
+	}
+
+	if (ssid->wapi_psk && os_strlen(ssid->wapi_psk) == len &&
+	    os_memcmp(ssid->wapi_psk, value, len) == 0)
+	{
+	    return 0;
+	}
+	os_free(ssid->wapi_psk);
+	ssid->wapi_psk = os_malloc(WAPI_MAX_PSK_HEX_LEN);
+	if (ssid->wapi_psk == NULL) {
+	    return -1;
+	}
+	os_memset(ssid->wapi_psk, 0x00, WAPI_MAX_PSK_HEX_LEN);
+	os_memcpy(ssid->wapi_psk, value, len);
+	ssid->wapi_psk[len] = '\0';
+	return 0;
+    }
+
+    wpa_printf(MSG_ERROR, "[%s] read wapi psk failed line %d\n",
+	       __func__, line);
+    return -1;
+}
+
+
+static char *
+wpa_config_write_wapi_psk(const struct parse_data *data,
+	                  struct wpa_ssid *ssid)
+{
+    if (ssid->wapi_psk)
+	return wpa_config_write_string_ascii(
+	                                     (const u8 *) ssid->wapi_psk,
+	                                     os_strlen(ssid->wapi_psk));
+
+    return NULL;
+}
+
+static int
+wpa_config_parse_user_cert_uri(const struct parse_data *data,
+	                       struct wpa_ssid *ssid, int line,
+	                       const char *value)
+{
+    size_t len;
+    wpa_printf(MSG_ERROR, "value : %s", value);
+    if (*value == '"') {
+	const char *pos;
+
+	value++;
+	pos = os_strrchr(value, '"');
+	if (pos) {
+	    len = pos - value;
+	} else {
+	    len = os_strlen(value);
+	}
+    } else{
+	len = os_strlen(value);
+    }
+
+
+    os_free(ssid->user_cert_uri);
+    ssid->user_cert_uri = os_malloc(len + 1);
+    if (ssid->user_cert_uri == NULL) {
+        return -1;
+    }
+    os_memcpy(ssid->user_cert_uri, value, len);
+    ssid->user_cert_uri[len] = '\0';
+    return 0;
+
+}
+
+static char *
+wpa_config_write_user_cert_uri(const struct parse_data *data,
+	                       struct wpa_ssid *ssid)
+{
+    if (ssid->user_cert_uri)
+	return wpa_config_write_string_ascii(
+	                                     (const u8 *) ssid->user_cert_uri,
+	                                     os_strlen(ssid->user_cert_uri));
+
+    return NULL;
+
+}
+
+static int
+wpa_config_parse_user_key_uri(const struct parse_data *data,
+	                       struct wpa_ssid *ssid, int line,
+	                       const char *value)
+{
+    size_t len;
+    wpa_printf(MSG_ERROR, "value : %s", value);
+    if (*value == '"') {
+	const char *pos;
+
+	value++;
+	pos = os_strrchr(value, '"');
+	if (pos) {
+	    len = pos - value;
+	} else {
+	    len = os_strlen(value);
+	}
+    } else{
+	len = os_strlen(value);
+    }
+
+
+    os_free(ssid->user_key_uri);
+    ssid->user_key_uri = os_malloc(len + 1);
+    if (ssid->user_key_uri == NULL) {
+        return -1;
+    }
+    os_memcpy(ssid->user_key_uri, value, len);
+    ssid->user_key_uri[len] = '\0';
+    return 0;
+}
+
+static char *
+wpa_config_write_user_key_uri(const struct parse_data *data,
+	                       struct wpa_ssid *ssid)
+{
+    if (ssid->user_key_uri)
+	return wpa_config_write_string_ascii(
+	                                     (const u8 *) ssid->user_key_uri,
+	                                     os_strlen(ssid->user_key_uri));
+
+    return NULL;
+
+}
+
+static int
+wpa_config_parse_as_cert_uri(const struct parse_data *data,
+	                       struct wpa_ssid *ssid, int line,
+	                       const char *value)
+{
+    wpa_printf(MSG_ERROR, "value : %s", value);
+    size_t len;
+    if (*value == '"') {
+	const char *pos;
+
+	value++;
+	pos = os_strrchr(value, '"');
+	if (pos) {
+	    len = pos - value;
+	} else {
+	    len = os_strlen(value);
+	}
+    } else{
+          len = os_strlen(value);
+    }
+
+
+	os_free(ssid->as_cert_uri);
+	ssid->as_cert_uri = os_malloc(len + 1);
+	if (ssid->as_cert_uri == NULL) {
+	    return -1;
+	}
+	os_memcpy(ssid->as_cert_uri, value, len);
+	ssid->as_cert_uri[len] = '\0';
+	return 0;
+}
+
+static char *
+wpa_config_write_as_cert_uri(const struct parse_data *data,
+	                       struct wpa_ssid *ssid)
+{
+    if (ssid->as_cert_uri)
+	return wpa_config_write_string_ascii(
+	                                     (const u8 *) ssid->as_cert_uri,
+	                                     os_strlen(ssid->as_cert_uri));
+
+    return NULL;
+
+}
+
+
+
+
+#endif // ATHEROS_WAPI
 
 static int wpa_config_parse_proto(const struct parse_data *data,
 				  struct wpa_ssid *ssid, int line,
@@ -406,6 +776,15 @@ static int wpa_config_parse_proto(const struct parse_data *data,
 		else if (os_strcmp(start, "RSN") == 0 ||
 			 os_strcmp(start, "WPA2") == 0)
 			val |= WPA_PROTO_RSN;
+#ifdef ATHEROS_WAPI
+		else if (os_strcmp(start, "WAPI") == 0)
+			val |= WPA_PROTO_WAPI;
+#endif
+#ifdef TI_WAPI
+		else if (os_strcmp(start, "WAPI") == 0){
+			val |= WPA_PROTO_WAPI;
+		}
+#endif
 		else {
 			wpa_printf(MSG_ERROR, "Line %d: invalid proto '%s'",
 				   line, start);
@@ -457,6 +836,25 @@ static char * wpa_config_write_proto(const struct parse_data *data,
 		first = 0;
 	}
 
+#ifdef ATHEROS_WAPI
+	if (ssid->proto & WPA_PROTO_WAPI) {
+		ret = os_snprintf(pos, end - pos, "%sWAPI", first ? "" : " ");
+		if (ret < 0 || ret >= end - pos)
+			return buf;
+		pos += ret;
+		first = 0;
+	}
+#endif
+#ifdef TI_WAPI
+	if (ssid->proto & WPA_PROTO_WAPI) {
+		ret = os_snprintf(pos, end - pos, "%sWAPI", first ? "" : " ");
+		if (ret < 0 || ret >= end - pos)
+			return buf;
+		pos += ret;
+		first = 0;
+	}
+#endif
+
 	return buf;
 }
 
@@ -493,6 +891,18 @@ static int wpa_config_parse_key_mgmt(const struct parse_data *data,
 			val |= WPA_KEY_MGMT_NONE;
 		else if (os_strcmp(start, "WPA-NONE") == 0)
 			val |= WPA_KEY_MGMT_WPA_NONE;
+#ifdef ATHEROS_WAPI
+	        else if (os_strcmp(start, "WAPI-PSK") == 0)
+	                val |= WPA_KEY_MGMT_WAPI_PSK;
+	        else if (os_strcmp(start, "WAPI-CERT") == 0)
+	                val |= WPA_KEY_MGMT_WAPI_CERT;
+#endif
+#ifdef TI_WAPI
+		else if (os_strcmp(start, "WAPI-PSK") == 0)
+			val |= WPA_KEY_MGMT_WAPI_PSK;
+		else if (os_strcmp(start, "WAPI-CERT") == 0)
+			val |= WPA_KEY_MGMT_WAPI_CERT;
+#endif
 		else {
 			wpa_printf(MSG_ERROR, "Line %d: invalid key_mgmt '%s'",
 				   line, start);
@@ -578,6 +988,50 @@ static char * wpa_config_write_key_mgmt(const struct parse_data *data,
 		pos += ret;
 	}
 
+#ifdef ATHEROS_WAPI
+	if (ssid->key_mgmt & WPA_KEY_MGMT_WAPI_PSK) {
+		ret = os_snprintf(pos, end - pos, "%sWAPI-PSK",
+				  pos == buf ? "" : " ");
+		if (ret < 0 || ret >= end - pos) {
+			end[-1] = '\0';
+			return buf;
+		}
+		pos += ret;
+	}
+
+	if (ssid->key_mgmt & WPA_KEY_MGMT_WAPI_CERT) {
+		ret = os_snprintf(pos, end - pos, "%sWAPI-CERT",
+				  pos == buf ? "" : " ");
+		if (ret < 0 || ret >= end - pos) {
+			end[-1] = '\0';
+			return buf;
+		}
+		pos += ret;
+	}
+#endif
+
+#ifdef TI_WAPI
+	if (ssid->key_mgmt & WPA_KEY_MGMT_WAPI_PSK) {
+		ret = os_snprintf(pos, end - pos, "%sWAPI-PSK",
+				  pos == buf ? "" : " ");
+		if (ret < 0 || ret >= end - pos) {
+			end[-1] = '\0';
+			return buf;
+		}
+		pos += ret;
+	}
+
+	if (ssid->key_mgmt & WPA_KEY_MGMT_WAPI_CERT) {
+		ret = os_snprintf(pos, end - pos, "%sWAPI-CERT",
+				  pos == buf ? "" : " ");
+		if (ret < 0 || ret >= end - pos) {
+			end[-1] = '\0';
+			return buf;
+		}
+	pos += ret;
+	}
+#endif
+
 	return buf;
 }
 
@@ -612,6 +1066,10 @@ static int wpa_config_parse_cipher(int line, const char *value)
 			val |= WPA_CIPHER_WEP40;
 		else if (os_strcmp(start, "NONE") == 0)
 			val |= WPA_CIPHER_NONE;
+#ifdef ATHEROS_WAPI
+	        else if (os_strcmp(start, "SMS4") == 0)
+	                val |= WPA_CIPHER_SMS4;
+#endif
 		else {
 			wpa_printf(MSG_ERROR, "Line %d: invalid cipher '%s'.",
 				   line, start);
@@ -694,6 +1152,18 @@ static char * wpa_config_write_cipher(int cipher)
 		pos += ret;
 	}
 
+#ifdef ATHEROS_WAPI
+	if (cipher & WPA_CIPHER_SMS4) {
+		ret = os_snprintf(pos, end - pos, "%sSMS4",
+				  pos == buf ? "" : " ");
+		if (ret < 0 || ret >= end - pos) {
+			end[-1] = '\0';
+			return buf;
+		}
+		pos += ret;
+	}
+#endif
+
 	return buf;
 }
 
@@ -706,7 +1176,13 @@ static int wpa_config_parse_pairwise(const struct parse_data *data,
 	val = wpa_config_parse_cipher(line, value);
 	if (val == -1)
 		return -1;
+#ifdef ATHEROS_WAPI
+	if (val & ~(WPA_CIPHER_CCMP | WPA_CIPHER_TKIP | WPA_CIPHER_NONE |
+	            WPA_CIPHER_SMS4))
+	{
+#else
 	if (val & ~(WPA_CIPHER_CCMP | WPA_CIPHER_TKIP | WPA_CIPHER_NONE)) {
+#endif
 		wpa_printf(MSG_ERROR, "Line %d: not allowed pairwise cipher "
 			   "(0x%x).", line, val);
 		return -1;
@@ -733,8 +1209,14 @@ static int wpa_config_parse_group(const struct parse_data *data,
 	val = wpa_config_parse_cipher(line, value);
 	if (val == -1)
 		return -1;
+#ifdef ATHEROS_WAPI
 	if (val & ~(WPA_CIPHER_CCMP | WPA_CIPHER_TKIP | WPA_CIPHER_WEP104 |
-		    WPA_CIPHER_WEP40)) {
+		    WPA_CIPHER_WEP40 | WPA_CIPHER_SMS4)) {
+#else
+	if (val & ~(WPA_CIPHER_CCMP | WPA_CIPHER_TKIP | WPA_CIPHER_WEP104 |
+	            WPA_CIPHER_WEP40)) {
+#endif /* ATHEROS_WAPI */
+
 		wpa_printf(MSG_ERROR, "Line %d: not allowed group cipher "
 			   "(0x%x).", line, val);
 		return -1;
@@ -1150,6 +1632,13 @@ static const struct parse_data ssid_fields[] = {
 	{ FUNC(pairwise) },
 	{ FUNC(group) },
 	{ FUNC(auth_alg) },
+#ifdef TI_WAPI
+	{ FUNC(wapi_psk) },
+	{ FUNC(user_cert_uri) },
+	{ FUNC(as_cert_uri) },
+	{ FUNC(user_key_uri) },
+	{ INT(wapi_key_type) },
+#endif
 #ifdef IEEE8021X_EAPOL
 	{ FUNC(eap) },
 	{ STR_LEN(identity) },
@@ -1202,7 +1691,14 @@ static const struct parse_data ssid_fields[] = {
 #endif /* CONFIG_IEEE80211W */
 	{ INT_RANGE(peerkey, 0, 1) },
 	{ INT_RANGE(mixed_cell, 0, 1) },
-	{ INT_RANGE(frequency, 0, 10000) }
+	{ INT_RANGE(frequency, 0, 10000) },
+#ifdef ATHEROS_WAPI
+	{ FUNC(as_cert_uri) },
+	{ FUNC(user_cert_uri) },
+	{ FUNC(user_key_uri) },
+	{ INT(wapi_key_type) },
+	{ FUNC_KEY(wapi_psk) },
+#endif // ATHEROS_WAPI
 };
 
 #ifdef WPA_UNICODE_SSID
@@ -1295,7 +1791,7 @@ int wpa_config_add_prio_network(struct wpa_config *config,
  * configuration when a network is being added or removed. This is also called
  * if a priority for a network is changed.
  */
-int wpa_config_update_prio_list(struct wpa_config *config)
+static int wpa_config_update_prio_list(struct wpa_config *config)
 {
 	struct wpa_ssid *ssid;
 	int ret = 0;
@@ -1362,6 +1858,12 @@ void wpa_config_free_ssid(struct wpa_ssid *ssid)
 	os_free(ssid->new_password);
 #endif /* IEEE8021X_EAPOL */
 	os_free(ssid->id_str);
+#ifdef ATHEROS_WAPI
+	os_free(ssid->as_cert_uri);
+	os_free(ssid->user_cert_uri);
+	os_free(ssid->user_key_uri);
+	os_free(ssid->wapi_psk);
+#endif
 	os_free(ssid);
 }
 
@@ -1534,6 +2036,9 @@ void wpa_config_set_network_defaults(struct wpa_ssid *ssid)
 	ssid->eap_workaround = DEFAULT_EAP_WORKAROUND;
 	ssid->fragment_size = DEFAULT_FRAGMENT_SIZE;
 #endif /* IEEE8021X_EAPOL */
+#ifdef ATHEROS_WAPI
+	ssid->wapi_key_type = DEFAULT_KEY_TYPE;
+#endif
 }
 
 

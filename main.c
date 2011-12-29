@@ -32,6 +32,9 @@ extern const char *wpa_supplicant_full_license5;
 #endif /* CONFIG_NO_STDOUT_DEBUG */
 
 extern struct wpa_driver_ops *wpa_supplicant_drivers[];
+#ifdef ATHEROS_WAPI
+static char logfile[] = "/var/wpa.log";
+#endif
 
 
 static void usage(void)
@@ -242,6 +245,10 @@ int main(int argc, char *argv[])
 			goto out;
 		}
 	}
+
+#ifdef ATHEROS_WAPI
+	params.wpa_debug_file_path = logfile;
+#endif
 
 	exitcode = 0;
 	global = wpa_supplicant_init(&params);

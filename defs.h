@@ -23,11 +23,22 @@
 #endif
 typedef enum { FALSE = 0, TRUE = 1 } Boolean;
 
-
+#ifdef ATHEROS_WAPI
+typedef enum { WPA_ALG_NONE, WPA_ALG_WEP, WPA_ALG_TKIP, WPA_ALG_CCMP,
+	       WPA_ALG_IGTK, WPA_ALG_DHV, WPA_ALG_SMS4 } wpa_alg;
+typedef enum { CIPHER_NONE, CIPHER_WEP40, CIPHER_TKIP, CIPHER_CCMP,
+	       CIPHER_WEP104, CIPHER_SMS4} wpa_cipher;
+#elif defined (TI_WAPI)
+typedef enum { WPA_ALG_NONE, WPA_ALG_WEP, WPA_ALG_TKIP, WPA_ALG_CCMP,
+	       WPA_ALG_IGTK, WPA_ALG_DHV, WPA_ALG_WAPI } wpa_alg;
+typedef enum { CIPHER_NONE, CIPHER_WEP40, CIPHER_TKIP, CIPHER_CCMP,
+	       CIPHER_WEP104, CIPHER_SMS4 } wpa_cipher;
+#else
 typedef enum { WPA_ALG_NONE, WPA_ALG_WEP, WPA_ALG_TKIP, WPA_ALG_CCMP,
 	       WPA_ALG_IGTK, WPA_ALG_DHV } wpa_alg;
 typedef enum { CIPHER_NONE, CIPHER_WEP40, CIPHER_TKIP, CIPHER_CCMP,
 	       CIPHER_WEP104 } wpa_cipher;
+#endif
 typedef enum { KEY_MGMT_802_1X, KEY_MGMT_PSK, KEY_MGMT_NONE,
 	       KEY_MGMT_802_1X_NO_WPA, KEY_MGMT_WPA_NONE } wpa_key_mgmt;
 
