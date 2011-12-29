@@ -508,7 +508,7 @@ static int wapi_get_fromKeyStorage(const char* key, char* value)
         wpa_printf(MSG_ERROR, "key must contain the phrase \"%s\"", KEYSTORE);
         return -1;
     }
-    return keystore_get(&key[11], value);
+    return keystore_get(&key[11], strlen(&key[11]), value);
 }
 
 int wapi_conf_read_certfile(const char *cert_file, const char *cert_key, unsigned char *cert_buf)

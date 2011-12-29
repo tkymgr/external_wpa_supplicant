@@ -200,7 +200,7 @@ include $(CLEAR_VARS)
 LOCAL_PREBUILT_LIBS := libiwnwai_asue.a libsms4.a libecc.a
 include $(BUILD_MULTI_PREBUILT)
 LOCAL_STATIC_LIBRARIES := libiwnwai_asue libsms4 libecc
-endif /* ATHEROS_WAPI */
+endif
 include $(CLEAR_VARS)
 
 ifndef CONFIG_L2_PACKET
